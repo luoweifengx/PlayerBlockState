@@ -19,6 +19,8 @@ public final class TerritoryConfig {
 	public static double occupationTakeoverMultiplier = 2.5;
 	/** 从边界区块夺走所属：挑战者分数须 ≥ 当前所属分数 × 此倍率 */
 	public static double borderTakeoverMultiplier = 1.25;
+	/** 从边界区块向外延伸的自然区块层数（切比雪夫距离），标为敌对边界 */
+	public static int hostileBorderExtensionChunks = 2;
 	/** 世界日时间（0-24000）触发每日刷新的时刻 */
 	public static int dailyRefreshTime = 0;
 

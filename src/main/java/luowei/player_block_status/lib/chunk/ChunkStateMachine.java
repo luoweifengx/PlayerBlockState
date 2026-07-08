@@ -45,23 +45,32 @@ public final class ChunkStateMachine {
 			}
 		}
 
-		// ② 仅遍历边界区块，对其四邻标记敌对边界（O(边界数 × 4)，不扫全图 NATURAL）
+		// ② 仅遍历边界区块，向外延伸若干格自然区标为敌对边界
 		deriveHostileBordersFromBorderChunks(finalStates, borderKeys);
 
 		return finalStates;
 	}
 
 	/**
-	 * 对每个 BORDER 区块检查四邻：自然或无记录 → HOSTILE_BORDER。
+	 * 以每个 BORDER 为中心，向外延伸 {@link TerritoryConfig#hostileBorderExtensionChunks} 格（切比雪夫距离）内的自然/无记录区块 → HOSTILE_BORDER。
 	 */
 	private static void deriveHostileBordersFromBorderChunks(Map<Long, ChunkState> states, List<Long> borderKeys) {
+		int extension = TerritoryConfig.hostileBorderExtensionChunks;
 		for (long borderKey : borderKeys) {
 			ChunkPos borderPos = new ChunkPos(borderKey);
-			for (ChunkPos neighbor : getNeighbors(borderPos)) {
-				long neighborKey = neighbor.toLong();
-				ChunkState neighborState = states.get(neighborKey);
-				if (neighborState == null || neighborState == ChunkState.NATURAL) {
-					states.put(neighborKey, ChunkState.HOSTILE_BORDER);
+			for (int dx = -extension; dx <= extension; dx++) {
+				for (int dz = -extension; dz <= extension; dz++) {
+					if (dx == 0 && dz == 0) {
+						continue;
+					}
+					if (Math.max(Math.abs(dx), Math.abs(dz)) > extension) {
+						continue;
+					}
+					long neighborKey = ChunkPos.asLong(borderPos.x + dx, borderPos.z + dz);
+					ChunkState neighborState = states.get(neighborKey);
+					if (neighborState == null || neighborState == ChunkState.NATURAL) {
+						states.put(neighborKey, ChunkState.HOSTILE_BORDER);
+					}
 				}
 			}
 		}
