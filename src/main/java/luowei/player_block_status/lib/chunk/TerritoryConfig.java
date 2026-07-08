@@ -9,11 +9,16 @@ public final class TerritoryConfig {
 	/** 从占领/边界退回自然状态：所有玩家分数均低于此值 */
 	public static int naturalReturnThreshold = 500;
 	public static int deathThreshold = -100;
-	public static int blockScorePerBlock = 4;
+	/** 每放置方块得分（调试临时值；原始值：4） */
+	public static int blockScorePerBlock = 300;
 	public static int stayScorePerInterval = 3;
 	public static int stayTickInterval = 100;
 	public static int deathPenalty = -50;
 	public static int deathRecoveryPerDay = 30;
+	/** 从占领区块夺走所属：挑战者分数须 ≥ 当前所属分数 × 此倍率 */
+	public static double occupationTakeoverMultiplier = 2.5;
+	/** 从边界区块夺走所属：挑战者分数须 ≥ 当前所属分数 × 此倍率 */
+	public static double borderTakeoverMultiplier = 1.25;
 	/** 世界日时间（0-24000）触发每日刷新的时刻 */
 	public static int dailyRefreshTime = 0;
 

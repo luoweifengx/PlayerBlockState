@@ -113,20 +113,38 @@ public final class TerritoryDailyProcessor {
 		try {
 			for (Map.Entry<Long, ChunkState> entry : result.finalStates().entrySet()) {
 				long chunkKey = entry.getKey();
-				ChunkTerritoryData chunk = data.getChunk(chunkKey);
+				ChunkState finalState = entry.getValue();
 				DailyChunkSnapshot snapshot = result.snapshots().get(chunkKey);
-				if (chunk == null || snapshot == null) {
+				ChunkTerritoryData chunk = data.getChunk(chunkKey);
+
+				if (snapshot != null) {
+					if (chunk == null) {
+						chunk = data.getOrCreateChunk(chunkKey);
+					}
+					chunk.getScoreModifiers().clear();
+					chunk.getScoreModifiers().putAll(snapshot.scoreModifiers());
+					chunk.getCachedScores().clear();
+					chunk.getCachedScores().putAll(snapshot.cachedScores());
+					chunk.setState(finalState);
+					chunk.setOccupyingOrg(result.occupyingOrgs().get(chunkKey));
+					chunk.clearStayScores();
+					chunk.clearDirty();
 					continue;
 				}
 
-				chunk.getScoreModifiers().clear();
-				chunk.getScoreModifiers().putAll(snapshot.scoreModifiers());
-				chunk.getCachedScores().clear();
-				chunk.getCachedScores().putAll(snapshot.cachedScores());
-				chunk.setState(entry.getValue());
-				chunk.setOccupyingOrg(result.occupyingOrgs().get(chunkKey));
-				chunk.clearStayScores();
-				chunk.clearDirty();
+				if (finalState == ChunkState.HOSTILE_BORDER) {
+					chunk = data.getOrCreateChunk(chunkKey);
+					chunk.setState(ChunkState.HOSTILE_BORDER);
+					chunk.setOccupyingOrg(null);
+					chunk.getCachedScores().clear();
+					chunk.clearStayScores();
+					chunk.clearDirty();
+					continue;
+				}
+
+				if (chunk != null && !chunk.hasTerritoryData()) {
+					data.getAllChunks().remove(chunkKey);
+				}
 			}
 
 			data.getEntityChunkIndex().rebuildOccupiedFrom(data.getAllChunks());

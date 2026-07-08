@@ -1,6 +1,8 @@
 package luowei.player_block_status.lib.chunk;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -32,20 +34,37 @@ public final class ChunkStateMachine {
 
 	public static Map<Long, ChunkState> deriveBorderStatesFromBaseStates(Map<Long, ChunkState> baseStates) {
 		Map<Long, ChunkState> finalStates = new HashMap<>(baseStates);
+		List<Long> borderKeys = new ArrayList<>();
 
+		// ① 先完成全部占领区 → 边界，同时收集边界键
 		for (Map.Entry<Long, ChunkState> entry : baseStates.entrySet()) {
 			if (entry.getValue() == ChunkState.OCCUPIED && isOccupiedEdge(baseStates, entry.getKey())) {
-				finalStates.put(entry.getKey(), ChunkState.BORDER);
+				long key = entry.getKey();
+				finalStates.put(key, ChunkState.BORDER);
+				borderKeys.add(key);
 			}
 		}
 
-		for (Map.Entry<Long, ChunkState> entry : baseStates.entrySet()) {
-			if (entry.getValue() == ChunkState.NATURAL && isAdjacentToBorder(finalStates, entry.getKey())) {
-				finalStates.put(entry.getKey(), ChunkState.HOSTILE_BORDER);
-			}
-		}
+		// ② 仅遍历边界区块，对其四邻标记敌对边界（O(边界数 × 4)，不扫全图 NATURAL）
+		deriveHostileBordersFromBorderChunks(finalStates, borderKeys);
 
 		return finalStates;
+	}
+
+	/**
+	 * 对每个 BORDER 区块检查四邻：自然或无记录 → HOSTILE_BORDER。
+	 */
+	private static void deriveHostileBordersFromBorderChunks(Map<Long, ChunkState> states, List<Long> borderKeys) {
+		for (long borderKey : borderKeys) {
+			ChunkPos borderPos = new ChunkPos(borderKey);
+			for (ChunkPos neighbor : getNeighbors(borderPos)) {
+				long neighborKey = neighbor.toLong();
+				ChunkState neighborState = states.get(neighborKey);
+				if (neighborState == null || neighborState == ChunkState.NATURAL) {
+					states.put(neighborKey, ChunkState.HOSTILE_BORDER);
+				}
+			}
+		}
 	}
 
 	public static void applyDeathRecoveryToModifiers(ChunkState state, Map<UUID, Integer> scoreModifiers) {
@@ -97,12 +116,12 @@ public final class ChunkStateMachine {
 		boolean wasOccupiedFamily = previous == ChunkState.OCCUPIED || previous == ChunkState.BORDER;
 
 		if (wasOccupiedFamily) {
-			if (!allScoresBelowNaturalReturn(chunk)) {
-				chunk.setOccupyingOrg(dominant != null ? dominant : chunk.getOccupyingOrg());
-				return ChunkState.OCCUPIED;
+			if (allScoresBelowNaturalReturn(chunk)) {
+				chunk.setOccupyingOrg(null);
+				return ChunkState.NATURAL;
 			}
-			chunk.setOccupyingOrg(null);
-			return ChunkState.NATURAL;
+			chunk.setOccupyingOrg(resolveOccupyingOrgWithTakeoverRule(chunk, previous));
+			return ChunkState.OCCUPIED;
 		}
 
 		if (maxScore >= TerritoryConfig.occupationThreshold) {
@@ -143,17 +162,6 @@ public final class ChunkStateMachine {
 		return false;
 	}
 
-	private static boolean isAdjacentToBorder(Map<Long, ChunkState> states, long chunkKey) {
-		ChunkPos pos = new ChunkPos(chunkKey);
-		for (ChunkPos neighbor : getNeighbors(pos)) {
-			ChunkState neighborState = states.get(neighbor.toLong());
-			if (neighborState == ChunkState.BORDER) {
-				return true;
-			}
-		}
-		return false;
-	}
-
 	private static ChunkPos[] getNeighbors(ChunkPos pos) {
 		return new ChunkPos[] {
 				new ChunkPos(pos.x - 1, pos.z),
@@ -179,6 +187,33 @@ public final class ChunkStateMachine {
 			}
 		}
 		return true;
+	}
+
+	private static UUID resolveOccupyingOrgWithTakeoverRule(ChunkTerritoryData chunk, ChunkState previous) {
+		UUID currentOrg = chunk.getOccupyingOrg();
+		if (currentOrg == null) {
+			return findDominantEntity(chunk);
+		}
+
+		int currentScore = chunk.getCachedScores().getOrDefault(currentOrg, 0);
+		double multiplier = previous == ChunkState.BORDER
+				? TerritoryConfig.borderTakeoverMultiplier
+				: TerritoryConfig.occupationTakeoverMultiplier;
+		int requiredScore = (int) Math.ceil(currentScore * multiplier);
+
+		UUID bestChallenger = null;
+		int bestChallengerScore = Integer.MIN_VALUE;
+		for (Map.Entry<UUID, Integer> entry : chunk.getCachedScores().entrySet()) {
+			if (entry.getKey().equals(currentOrg)) {
+				continue;
+			}
+			if (entry.getValue() >= requiredScore && entry.getValue() > bestChallengerScore) {
+				bestChallenger = entry.getKey();
+				bestChallengerScore = entry.getValue();
+			}
+		}
+
+		return bestChallenger != null ? bestChallenger : currentOrg;
 	}
 
 	private static UUID findDominantEntity(ChunkTerritoryData chunk) {

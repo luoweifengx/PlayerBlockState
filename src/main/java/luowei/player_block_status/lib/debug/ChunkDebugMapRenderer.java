@@ -99,10 +99,10 @@ public final class ChunkDebugMapRenderer {
 		return switch (state) {
 			case NATURAL -> new Color(34, 139, 34);
 			case OCCUPIED -> new Color(30, 144, 255);
-			case BORDER -> new Color(0, 191, 255);
-			case HOSTILE_BORDER -> new Color(255, 140, 0);
+			case BORDER -> new Color(255, 140, 0);
+			case HOSTILE_BORDER -> new Color(220, 20, 60);
 			case SAFE -> new Color(169, 169, 169);
-			case DEATH -> new Color(178, 34, 34);
+			case DEATH -> new Color(128, 0, 128);
 		};
 	}
 
@@ -111,10 +111,10 @@ public final class ChunkDebugMapRenderer {
 				Chunk State Colors:
 				  NATURAL (1)        - Green   #228B22
 				  OCCUPIED (2)       - Blue    #1E90FF
-				  BORDER (3)         - Cyan    #00BFFF
-				  HOSTILE_BORDER (4) - Orange  #FF8C00
+				  BORDER (3)         - Orange  #FF8C00
+				  HOSTILE_BORDER (4) - Red     #DC143C
 				  SAFE (5)           - Gray    #A9A9A9
-				  DEATH (6)          - Red     #B22222
+				  DEATH (6)          - Purple  #800080
 				""";
 	}
 
