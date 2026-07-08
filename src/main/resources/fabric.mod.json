@@ -1,0 +1,38 @@
+{
+	"schemaVersion": 1,
+	"id": "player-block-status",
+	"version": "${version}",
+	"name": "Player Block Status",
+	"description": "Library mod for chunk territory state, player block tracking, and debug map export.",
+	"authors": [
+		"Me!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/player-block-status/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"luowei.player_block_status.PlayerBlockStatus"
+		],
+		"client": [
+			"luowei.player_block_status.client.PlayerBlockStatusClient"
+		]
+	},
+	"mixins": [
+		"player-block-status.mixins.json",
+		{
+			"config": "player-block-status.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~1.21.5",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
