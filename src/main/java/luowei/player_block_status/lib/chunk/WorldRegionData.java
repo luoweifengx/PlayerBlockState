@@ -1,6 +1,5 @@
 package luowei.player_block_status.lib.chunk;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -10,99 +9,102 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
-import com.mojang.serialization.Codec;
-import com.mojang.serialization.codecs.RecordCodecBuilder;
-
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.saveddata.SavedData;
-import net.minecraft.world.level.saveddata.SavedDataType;
 
 import luowei.player_block_status.PlayerBlockStatus;
 import luowei.player_block_status.lib.api.OrganizationProvider;
+import luowei.player_block_status.lib.debug.MapExportTrace;
 
 /**
- * 维度级领土数据持久化，以区块为单位存储。
+ * 维度领土协调器：区块数据存于 chunk Attachment，维度元数据存于 {@link DimensionTerritoryData}。
  */
-public class WorldRegionData extends SavedData {
-	private static final String DATA_ID = "player_block_status_territory";
-
-	public static final Codec<WorldRegionData> CODEC = RecordCodecBuilder.create(instance -> instance.group(
-			TerritoryCodec.longKeyMap(ChunkTerritoryData.CODEC).fieldOf("chunks").forGetter(data -> data.chunks),
-			StructureBounds.CODEC.listOf().fieldOf("structures").forGetter(data -> data.pendingStructures),
-			Codec.LONG.fieldOf("last_daily_day").forGetter(data -> data.lastDailyDay)
-	).apply(instance, (chunks, structures, lastDailyDay) -> {
-		WorldRegionData data = new WorldRegionData();
-		data.chunks.putAll(chunks);
-		data.pendingStructures.addAll(structures);
-		data.lastDailyDay = lastDailyDay;
-		data.migrateLegacyStayData();
-		data.entityChunkIndex.rebuildOccupiedFrom(data.chunks);
-		data.indexReady = true;
-		return data;
-	}));
-
-	public static final SavedDataType<WorldRegionData> TYPE = new SavedDataType<>(
-			DATA_ID,
-			context -> new WorldRegionData(),
-			context -> WorldRegionData.CODEC,
-			null
-	);
-
-	private final Map<Long, ChunkTerritoryData> chunks = new HashMap<>();
-	private final List<StructureBounds> pendingStructures = new ArrayList<>();
+public final class WorldRegionData {
+	private final ServerLevel level;
+	private final DimensionTerritoryData dimensionData;
 	private final Set<Long> dirtyChunkKeys = new HashSet<>();
-	private final EntityChunkIndex entityChunkIndex = new EntityChunkIndex();
-	private long lastDailyDay = -1;
-	private boolean indexReady;
-	private boolean dailyRefreshInProgress;
+
+	private WorldRegionData(ServerLevel level, DimensionTerritoryData dimensionData) {
+		this.level = level;
+		this.dimensionData = dimensionData;
+	}
 
 	public static WorldRegionData get(ServerLevel level) {
-		WorldRegionData data = level.getDataStorage().computeIfAbsent(TYPE);
-		data.ensureIndexReady();
-		return data;
+		return new WorldRegionData(level, DimensionTerritoryData.get(level));
 	}
 
-	private void ensureIndexReady() {
-		if (!indexReady) {
-			migrateLegacyStayData();
-			entityChunkIndex.rebuildOccupiedFrom(chunks);
-			indexReady = true;
+	public static WorldRegionData getForMapExport(ServerLevel level, MapExportTrace trace) {
+		if (trace != null) {
+			trace.step("DimensionTerritoryData.computeIfAbsent begin");
 		}
-	}
-
-	/** 旧存档将停留分写入 score_modifiers，迁移到 stay_scores 以便每日清零。 */
-	private void migrateLegacyStayData() {
-		for (ChunkTerritoryData chunk : chunks.values()) {
-			if (!chunk.getStayScores().isEmpty() || chunk.getState() == ChunkState.DEATH) {
-				continue;
-			}
-
-			chunk.getScoreModifiers().entrySet().removeIf(entry -> {
-				if (entry.getValue() <= 0) {
-					return false;
-				}
-				chunk.getStayScores().merge(entry.getKey(), entry.getValue(), Integer::sum);
-				return true;
-			});
+		long loadStart = System.nanoTime();
+		DimensionTerritoryData dimensionData = DimensionTerritoryData.get(level);
+		if (trace != null) {
+			trace.step(
+					"DimensionTerritoryData loaded in %dms (activeChunkKeys=%d legacyPending=%d)",
+					(System.nanoTime() - loadStart) / 1_000_000L,
+					dimensionData.getActiveChunkKeys().size(),
+					dimensionData.getLegacyPendingChunkCount()
+			);
 		}
+		return new WorldRegionData(level, dimensionData);
 	}
 
 	public ChunkTerritoryData getOrCreateChunk(long chunkKey) {
-		return chunks.computeIfAbsent(chunkKey, key -> ChunkTerritoryData.createEmpty());
+		ChunkPos chunkPos = new ChunkPos(chunkKey);
+		ChunkTerritoryData legacy = dimensionData.pollLegacyChunk(chunkKey);
+		if (legacy != null) {
+			ChunkTerritoryAccess.attach(level, chunkPos, legacy);
+			trackActiveChunk(chunkKey);
+			dimensionData.flushLegacyMigration();
+			return legacy;
+		}
+
+		ChunkTerritoryData chunk = ChunkTerritoryAccess.getOrCreate(level, chunkPos);
+		if (chunk.hasTerritoryData()) {
+			trackActiveChunk(chunkKey);
+		}
+		return chunk;
 	}
 
 	public ChunkTerritoryData getChunk(long chunkKey) {
-		return chunks.get(chunkKey);
+		if (dimensionData.hasLegacyChunk(chunkKey)) {
+			return dimensionData.peekLegacyChunk(chunkKey);
+		}
+
+		ChunkTerritoryData chunk = ChunkTerritoryAccess.getIfPresent(level, new ChunkPos(chunkKey));
+		if (chunk == null || !chunk.hasTerritoryData()) {
+			return null;
+		}
+		return chunk;
 	}
 
 	public Map<Long, ChunkTerritoryData> getAllChunks() {
+		return collectAllChunks();
+	}
+
+	Map<Long, ChunkTerritoryData> collectAllChunks() {
+		Map<Long, ChunkTerritoryData> chunks = new HashMap<>();
+		for (long chunkKey : new HashSet<>(dimensionData.getActiveChunkKeys())) {
+			ChunkTerritoryData chunk = getChunk(chunkKey);
+			if (chunk != null && chunk.hasTerritoryData()) {
+				chunks.put(chunkKey, chunk);
+				continue;
+			}
+			untrackActiveChunk(chunkKey);
+		}
+
+		for (long chunkKey : new HashSet<>(dimensionData.getActiveChunkKeys())) {
+			if (dimensionData.hasLegacyChunk(chunkKey)) {
+				chunks.put(chunkKey, dimensionData.peekLegacyChunk(chunkKey));
+			}
+		}
 		return chunks;
 	}
 
 	public EntityChunkIndex getEntityChunkIndex() {
-		return entityChunkIndex;
+		return dimensionData.getEntityChunkIndex();
 	}
 
 	public void markChunkDirty(long chunkKey) {
@@ -114,34 +116,31 @@ public class WorldRegionData extends SavedData {
 	}
 
 	public List<StructureBounds> getPendingStructures() {
-		return pendingStructures;
+		return dimensionData.getPendingStructures();
 	}
 
 	public void registerStructure(StructureBounds bounds) {
-		pendingStructures.add(bounds);
-		setDirty();
+		dimensionData.registerStructure(bounds);
+	}
+
+	public boolean tryMarkStructureInstanceRegistered(long instanceKey) {
+		return dimensionData.tryMarkStructureInstanceRegistered(instanceKey);
 	}
 
 	public long getLastDailyDay() {
-		return lastDailyDay;
+		return dimensionData.getLastDailyDay();
 	}
 
 	public boolean tryBeginDailyRefresh(long currentDay) {
-		if (dailyRefreshInProgress || currentDay <= lastDailyDay) {
-			return false;
-		}
-		dailyRefreshInProgress = true;
-		lastDailyDay = currentDay;
-		setDirty();
-		return true;
+		return dimensionData.tryBeginDailyRefresh(currentDay);
 	}
 
 	public void finishDailyRefresh() {
-		dailyRefreshInProgress = false;
+		dimensionData.finishDailyRefresh();
 	}
 
 	public void cancelDailyRefreshInProgress() {
-		dailyRefreshInProgress = false;
+		dimensionData.cancelDailyRefreshInProgress();
 	}
 
 	public void onBlockPlaced(ServerLevel level, BlockPos pos, UUID playerId, OrganizationProvider orgProvider) {
@@ -151,21 +150,21 @@ public class WorldRegionData extends SavedData {
 		long chunkKey = new ChunkPos(pos).toLong();
 		ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
 		chunk.addPlacedBlock(pos, scoreEntity);
+		persistChunkChange(chunkKey, chunk);
 		markChunkDirty(chunkKey);
-		setDirty();
 	}
 
 	public void onBlockRemoved(BlockPos pos) {
 		long chunkKey = new ChunkPos(pos).toLong();
-		ChunkTerritoryData chunk = chunks.get(chunkKey);
+		ChunkTerritoryData chunk = getChunk(chunkKey);
 		if (chunk == null) {
 			return;
 		}
 
 		chunk.removePlacedBlock(pos);
+		persistChunkChange(chunkKey, chunk);
 		maybeRemoveEmptyChunk(chunkKey, chunk);
 		markChunkDirty(chunkKey);
-		setDirty();
 	}
 
 	public void onPlayerStay(ServerLevel level, UUID playerId, ChunkPos chunkPos, OrganizationProvider orgProvider) {
@@ -173,7 +172,8 @@ public class WorldRegionData extends SavedData {
 		ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
 		UUID scoreEntity = resolveScoreEntity(level, playerId, orgProvider);
 		chunk.accumulateStayScore(scoreEntity, TerritoryConfig.stayScorePerInterval);
-		setDirty();
+		persistChunkChange(chunkKey, chunk);
+		markChunkDirty(chunkKey);
 	}
 
 	public void onPlayerDeath(ServerLevel level, UUID playerId, ChunkPos chunkPos, OrganizationProvider orgProvider) {
@@ -181,41 +181,55 @@ public class WorldRegionData extends SavedData {
 		ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
 		UUID scoreEntity = resolveScoreEntity(level, playerId, orgProvider);
 		chunk.addDeathPenalty(scoreEntity, TerritoryConfig.deathPenalty);
+		persistChunkChange(chunkKey, chunk);
 		markChunkDirty(chunkKey);
-		setDirty();
 	}
 
 	public void transferPlayerToOrg(UUID playerId, UUID orgId) {
 		Set<Long> affectedChunks = findChunksForEntity(playerId);
 		for (long chunkKey : affectedChunks) {
-			ChunkTerritoryData chunk = chunks.get(chunkKey);
-			if (chunk == null) {
-				continue;
-			}
+			ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
 			chunk.remapEntitySilent(playerId, orgId);
+			persistChunkChange(chunkKey, chunk);
 		}
-		entityChunkIndex.transferPlayerToOrg(playerId, orgId);
-		setDirty();
+		dimensionData.getEntityChunkIndex().transferPlayerToOrg(playerId, orgId);
 	}
 
 	public void remapOrganization(UUID from, UUID to) {
 		Set<Long> affectedChunks = findChunksForEntity(from);
 		for (long chunkKey : affectedChunks) {
-			ChunkTerritoryData chunk = chunks.get(chunkKey);
-			if (chunk == null) {
-				continue;
-			}
+			ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
 			chunk.remapEntitySilent(from, to);
+			persistChunkChange(chunkKey, chunk);
 		}
-		entityChunkIndex.mergeOrganization(from, to);
-		setDirty();
+		dimensionData.getEntityChunkIndex().mergeOrganization(from, to);
+	}
+
+	public Optional<ChunkTerritoryData> queryChunk(ChunkPos chunkPos) {
+		ChunkTerritoryData chunk = getChunk(chunkPos.toLong());
+		return Optional.ofNullable(chunk);
+	}
+
+	void removeEmptyChunk(long chunkKey) {
+		ChunkPos chunkPos = new ChunkPos(chunkKey);
+		ChunkTerritoryData chunk = getChunk(chunkKey);
+		if (chunk == null) {
+			untrackActiveChunk(chunkKey);
+			return;
+		}
+
+		ChunkTerritoryAccess.clearIfEmpty(level, chunkPos, chunk);
+		if (!chunk.hasTerritoryData()) {
+			untrackActiveChunk(chunkKey);
+		}
 	}
 
 	private Set<Long> findChunksForEntity(UUID entityId) {
 		Set<Long> affectedChunks = new HashSet<>();
-		for (Map.Entry<Long, ChunkTerritoryData> entry : chunks.entrySet()) {
-			if (entry.getValue().referencesEntity(entityId)) {
-				affectedChunks.add(entry.getKey());
+		for (long chunkKey : dimensionData.getActiveChunkKeys()) {
+			ChunkTerritoryData chunk = getChunk(chunkKey);
+			if (chunk != null && chunk.referencesEntity(entityId)) {
+				affectedChunks.add(chunkKey);
 			}
 		}
 		return affectedChunks;
@@ -223,12 +237,12 @@ public class WorldRegionData extends SavedData {
 
 	private void maybeRemoveEmptyChunk(long chunkKey, ChunkTerritoryData chunk) {
 		if (!chunk.hasTerritoryData()) {
-			chunks.remove(chunkKey);
+			removeEmptyChunk(chunkKey);
 		}
 	}
 
 	private void claimStructureIfNeeded(ServerLevel level, BlockPos placedPos, UUID scoreEntity) {
-		Iterator<StructureBounds> iterator = pendingStructures.iterator();
+		Iterator<StructureBounds> iterator = dimensionData.getPendingStructures().iterator();
 		while (iterator.hasNext()) {
 			StructureBounds bounds = iterator.next();
 			if (!bounds.contains(placedPos)) {
@@ -239,10 +253,36 @@ public class WorldRegionData extends SavedData {
 				long chunkKey = new ChunkPos(blockPos).toLong();
 				ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
 				chunk.addPlacedBlock(blockPos, scoreEntity);
+				persistChunkChange(chunkKey, chunk);
 				markChunkDirty(chunkKey);
 			}
 			iterator.remove();
+			dimensionData.setDirty();
 			PlayerBlockStatus.LOGGER.info("Structure {} claimed by {}", bounds.id(), scoreEntity);
+		}
+	}
+
+	private void persistChunkChange(long chunkKey, ChunkTerritoryData chunk) {
+		ChunkPos chunkPos = new ChunkPos(chunkKey);
+		if (chunk.hasTerritoryData()) {
+			trackActiveChunk(chunkKey);
+			ChunkTerritoryAccess.markDirty(level, chunkPos);
+			return;
+		}
+
+		ChunkTerritoryAccess.clearIfEmpty(level, chunkPos, chunk);
+		untrackActiveChunk(chunkKey);
+	}
+
+	private void trackActiveChunk(long chunkKey) {
+		if (dimensionData.getActiveChunkKeys().add(chunkKey)) {
+			dimensionData.setDirty();
+		}
+	}
+
+	private void untrackActiveChunk(long chunkKey) {
+		if (dimensionData.getActiveChunkKeys().remove(chunkKey)) {
+			dimensionData.setDirty();
 		}
 	}
 
@@ -250,9 +290,5 @@ public class WorldRegionData extends SavedData {
 		return level.getServer().getPlayerList().getPlayer(playerId) != null
 				? orgProvider.getOrganizationId(level.getServer().getPlayerList().getPlayer(playerId)).orElse(playerId)
 				: playerId;
-	}
-
-	public Optional<ChunkTerritoryData> queryChunk(ChunkPos chunkPos) {
-		return Optional.ofNullable(chunks.get(chunkPos.toLong()));
 	}
 }

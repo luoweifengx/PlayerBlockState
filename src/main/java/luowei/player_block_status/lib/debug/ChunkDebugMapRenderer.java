@@ -6,7 +6,9 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 import javax.imageio.ImageIO;
 
@@ -17,6 +19,7 @@ import luowei.player_block_status.PlayerBlockStatus;
 import luowei.player_block_status.lib.api.PlayerBlockStatusLib;
 import luowei.player_block_status.lib.chunk.ChunkState;
 import luowei.player_block_status.lib.chunk.ChunkTerritoryData;
+import luowei.player_block_status.lib.chunk.WorldRegionData;
 
 /**
  * 将区块状态渲染为 PNG 调试地图，按状态着色。
@@ -27,15 +30,94 @@ public final class ChunkDebugMapRenderer {
 	private ChunkDebugMapRenderer() {
 	}
 
+	public static Map<Long, ChunkState> collectChunkStates(ServerLevel level, ChunkPos center, int radiusChunks) {
+		return collectChunkStates(level, center, radiusChunks, null);
+	}
+
+	public static Map<Long, ChunkState> collectChunkStates(
+			ServerLevel level,
+			ChunkPos center,
+			int radiusChunks,
+			MapExportTrace trace
+	) {
+		if (trace != null) {
+			trace.step("collectChunkStates begin, center=%s radius=%d", center, radiusChunks);
+		}
+
+		long regionLoadStart = System.nanoTime();
+		WorldRegionData data = WorldRegionData.getForMapExport(level, trace);
+		if (trace != null) {
+			trace.step("WorldRegionData ready in %dms", (System.nanoTime() - regionLoadStart) / 1_000_000L);
+		}
+
+		int span = radiusChunks * 2 + 1;
+		int total = span * span;
+		Map<Long, ChunkState> states = HashMap.newHashMap(total);
+		int queried = 0;
+		int found = 0;
+		long slowQueryThresholdMs = 50L;
+
+		for (int dx = -radiusChunks; dx <= radiusChunks; dx++) {
+			for (int dz = -radiusChunks; dz <= radiusChunks; dz++) {
+				ChunkPos chunkPos = new ChunkPos(center.x + dx, center.z + dz);
+				long key = chunkPos.toLong();
+				long queryStart = System.nanoTime();
+				Optional<ChunkTerritoryData> chunk = data.queryChunk(chunkPos);
+				long queryMs = (System.nanoTime() - queryStart) / 1_000_000L;
+				queried++;
+				if (chunk.isPresent()) {
+					found++;
+				}
+				if (trace != null && queryMs >= slowQueryThresholdMs) {
+					trace.step("slow queryChunk %s took %dms found=%s", chunkPos, queryMs, chunk.isPresent());
+				}
+				ChunkState state = chunk.map(ChunkTerritoryData::getState).orElse(ChunkState.NATURAL);
+				states.put(key, state);
+				if (trace != null && (queried % 100 == 0 || queried == total)) {
+					trace.step("query progress %d/%d (found=%d)", queried, total, found);
+				}
+			}
+		}
+
+		if (trace != null) {
+			trace.step("collectChunkStates done, queried=%d found=%d", queried, found);
+		}
+		return states;
+	}
+
 	public static Path render(ServerLevel level, ChunkPos center, int radiusChunks, Path outputPath) {
+		return renderFromStates(collectChunkStates(level, center, radiusChunks), center, radiusChunks, outputPath);
+	}
+
+	public static Path renderFromStates(
+			Map<Long, ChunkState> states,
+			ChunkPos center,
+			int radiusChunks,
+			Path outputPath
+	) {
+		return renderFromStates(states, center, radiusChunks, outputPath, null);
+	}
+
+	public static Path renderFromStates(
+			Map<Long, ChunkState> states,
+			ChunkPos center,
+			int radiusChunks,
+			Path outputPath,
+			MapExportTrace trace
+	) {
+		if (trace != null) {
+			trace.step("renderFromStates begin, pixels=%dx%d",
+					(radiusChunks * 2 + 1) * PIXELS_PER_CHUNK,
+					(radiusChunks * 2 + 1) * PIXELS_PER_CHUNK);
+		}
 		int size = radiusChunks * 2 + 1;
 		BufferedImage image = new BufferedImage(size * PIXELS_PER_CHUNK, size * PIXELS_PER_CHUNK, BufferedImage.TYPE_INT_RGB);
 		Graphics2D graphics = image.createGraphics();
 
 		for (int dx = -radiusChunks; dx <= radiusChunks; dx++) {
 			for (int dz = -radiusChunks; dz <= radiusChunks; dz++) {
-				ChunkPos chunkPos = new ChunkPos(center.x + dx, center.z + dz);
-				ChunkState state = PlayerBlockStatusLib.queryChunkState(level, chunkPos).orElse(ChunkState.NATURAL);
+				long key = ChunkPos.asLong(center.x + dx, center.z + dz);
+				ChunkState state = states.getOrDefault(key, ChunkState.NATURAL);
 				Color color = colorForState(state);
 				int pixelX = (dx + radiusChunks) * PIXELS_PER_CHUNK;
 				int pixelZ = (dz + radiusChunks) * PIXELS_PER_CHUNK;
@@ -45,7 +127,7 @@ public final class ChunkDebugMapRenderer {
 		}
 
 		graphics.dispose();
-		writeImage(image, outputPath);
+		writeImage(image, outputPath, trace);
 		return outputPath;
 	}
 
@@ -119,6 +201,13 @@ public final class ChunkDebugMapRenderer {
 	}
 
 	private static void writeImage(BufferedImage image, Path outputPath) {
+		writeImage(image, outputPath, null);
+	}
+
+	private static void writeImage(BufferedImage image, Path outputPath, MapExportTrace trace) {
+		if (trace != null) {
+			trace.step("writeImage begin: %s", outputPath);
+		}
 		try {
 			if (outputPath.getParent() != null) {
 				Files.createDirectories(outputPath.getParent());
@@ -128,6 +217,9 @@ public final class ChunkDebugMapRenderer {
 			Files.writeString(legendPath, legendText());
 			PlayerBlockStatus.LOGGER.info("Chunk debug map written to {} (legend: {})",
 					outputPath.toAbsolutePath(), legendPath.toAbsolutePath());
+			if (trace != null) {
+				trace.step("writeImage done: %s", outputPath.toAbsolutePath());
+			}
 		} catch (IOException exception) {
 			throw new RuntimeException("Failed to write chunk debug map", exception);
 		}

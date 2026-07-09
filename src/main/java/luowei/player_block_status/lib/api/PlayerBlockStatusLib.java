@@ -16,6 +16,7 @@ import luowei.player_block_status.lib.chunk.RegionManager;
 import luowei.player_block_status.lib.chunk.StructureBounds;
 import luowei.player_block_status.lib.chunk.WorldRegionData;
 import luowei.player_block_status.lib.debug.ChunkDebugMapRenderer;
+import luowei.player_block_status.lib.structure.StructureTerritoryRegistry;
 
 /**
  * 对外公开 API，供其他模组注册回调与查询区块信息。
@@ -45,6 +46,10 @@ public final class PlayerBlockStatusLib {
 
 	public static void registerStructure(ServerLevel level, StructureBounds bounds) {
 		RegionManager.registerStructure(level, bounds);
+	}
+
+	public static StructureTerritoryRegistry getStructureTerritoryRegistry() {
+		return StructureTerritoryRegistry.INSTANCE;
 	}
 
 	public static void transferPlayerToOrg(ServerLevel level, UUID playerId, UUID orgId) {

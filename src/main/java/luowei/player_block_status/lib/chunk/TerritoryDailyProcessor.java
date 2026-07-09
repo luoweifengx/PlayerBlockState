@@ -186,14 +186,13 @@ public final class TerritoryDailyProcessor {
 				}
 
 				if (chunk != null && !chunk.hasTerritoryData()) {
-					data.getAllChunks().remove(chunkKey);
+					data.removeEmptyChunk(chunkKey);
 				}
 			}
 
 			data.getEntityChunkIndex().rebuildOccupiedFrom(data.getAllChunks());
 			data.getDirtyChunkKeys().removeAll(dirtyKeys);
 			data.finishDailyRefresh();
-			data.setDirty();
 
 			PlayerBlockStatus.LOGGER.info(
 					"Daily territory refresh completed for {} ({} dirty chunks, {} state updates)",
