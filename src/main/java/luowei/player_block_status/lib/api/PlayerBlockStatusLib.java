@@ -71,6 +71,17 @@ public final class PlayerBlockStatusLib {
 		return WorldRegionData.get(level).getEntityChunkIndex().getChunks(entityId);
 	}
 
+	public static Optional<UUID> queryPlayerOrganization(net.minecraft.server.MinecraftServer server, UUID playerId) {
+		return luowei.player_block_status.lib.org.OrganizationService.getOrganizationId(server, playerId);
+	}
+
+	public static Optional<luowei.player_block_status.lib.org.OrganizationRecord> queryOrganization(
+			net.minecraft.server.MinecraftServer server,
+			UUID orgId
+	) {
+		return luowei.player_block_status.lib.org.OrganizationService.getOrganization(server, orgId);
+	}
+
 	public static Path exportDebugMap(ServerLevel level, ChunkPos center, int radiusChunks, Path outputPath) {
 		return ChunkDebugMapRenderer.render(level, center, radiusChunks, outputPath);
 	}

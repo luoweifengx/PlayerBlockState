@@ -123,6 +123,10 @@ public class ChunkTerritoryData {
 				|| placedBlocks.containsValue(entityId);
 	}
 
+	public boolean referencesEntity(UUID entityId) {
+		return entityId.equals(occupyingOrg) || hasEntityPresence(entityId);
+	}
+
 	public Set<UUID> collectPresentEntities() {
 		Set<UUID> entities = new HashSet<>(scoreModifiers.keySet());
 		entities.addAll(stayScores.keySet());
@@ -149,6 +153,15 @@ public class ChunkTerritoryData {
 	}
 
 	public void remapEntity(UUID from, UUID to) {
+		remapEntity(from, to, true);
+	}
+
+	/** 组织迁移等场景：只改 UUID，不标脏页。 */
+	public void remapEntitySilent(UUID from, UUID to) {
+		remapEntity(from, to, false);
+	}
+
+	private void remapEntity(UUID from, UUID to, boolean markDirtyFlags) {
 		boolean changed = false;
 
 		for (Map.Entry<Long, UUID> entry : new ArrayList<>(placedBlocks.entrySet())) {
@@ -170,7 +183,12 @@ public class ChunkTerritoryData {
 			changed = true;
 		}
 
-		if (changed) {
+		if (from.equals(occupyingOrg)) {
+			occupyingOrg = to;
+			changed = true;
+		}
+
+		if (changed && markDirtyFlags) {
 			markDirty(DirtyFlag.ORGANIZATION);
 			markDirty(DirtyFlag.BLOCK_SCORE);
 			markDirty(DirtyFlag.STATE);

@@ -33,12 +33,22 @@ public final class ChunkStateMachine {
 	}
 
 	public static Map<Long, ChunkState> deriveBorderStatesFromBaseStates(Map<Long, ChunkState> baseStates) {
+		return deriveBorderStatesFromBaseStates(baseStates, Map.of());
+	}
+
+	/**
+	 * @param contextStates 未参与本次重算的邻区状态，仅用于判断占领区是否为边缘
+	 */
+	public static Map<Long, ChunkState> deriveBorderStatesFromBaseStates(
+			Map<Long, ChunkState> baseStates,
+			Map<Long, ChunkState> contextStates
+	) {
 		Map<Long, ChunkState> finalStates = new HashMap<>(baseStates);
 		List<Long> borderKeys = new ArrayList<>();
 
 		// ① 先完成全部占领区 → 边界，同时收集边界键
 		for (Map.Entry<Long, ChunkState> entry : baseStates.entrySet()) {
-			if (entry.getValue() == ChunkState.OCCUPIED && isOccupiedEdge(baseStates, entry.getKey())) {
+			if (entry.getValue() == ChunkState.OCCUPIED && isOccupiedEdge(baseStates, contextStates, entry.getKey())) {
 				long key = entry.getKey();
 				finalStates.put(key, ChunkState.BORDER);
 				borderKeys.add(key);
@@ -160,10 +170,18 @@ public final class ChunkStateMachine {
 		}
 	}
 
-	private static boolean isOccupiedEdge(Map<Long, ChunkState> states, long chunkKey) {
+	private static boolean isOccupiedEdge(
+			Map<Long, ChunkState> states,
+			Map<Long, ChunkState> contextStates,
+			long chunkKey
+	) {
 		ChunkPos pos = new ChunkPos(chunkKey);
 		for (ChunkPos neighbor : getNeighbors(pos)) {
-			ChunkState neighborState = states.get(neighbor.toLong());
+			long neighborKey = neighbor.toLong();
+			ChunkState neighborState = states.get(neighborKey);
+			if (neighborState == null) {
+				neighborState = contextStates.get(neighborKey);
+			}
 			if (neighborState == null || neighborState != ChunkState.OCCUPIED) {
 				return true;
 			}

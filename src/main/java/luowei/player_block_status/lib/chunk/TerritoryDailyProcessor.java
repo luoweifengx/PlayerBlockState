@@ -20,7 +20,7 @@ import luowei.player_block_status.lib.api.OrganizationProvider;
 import luowei.player_block_status.lib.api.SafeBiomeChecker;
 
 /**
- * 每日日出时异步并行重算领土分数与状态，算完后回写主线程并清零停留分。
+ * 每日日出时异步并行重算标脏区块的分数与状态，算完后回写主线程并清零停留分。
  */
 public final class TerritoryDailyProcessor {
 	private static final ExecutorService EXECUTOR = Executors.newWorkStealingPool(
@@ -35,23 +35,41 @@ public final class TerritoryDailyProcessor {
 			return;
 		}
 
-		List<DailyChunkSnapshot> snapshots = captureSnapshots(level, data, safeChecker);
+		Set<Long> dirtyKeys = new HashSet<>(data.getDirtyChunkKeys());
+		if (dirtyKeys.isEmpty()) {
+			data.finishDailyRefresh();
+			PlayerBlockStatus.LOGGER.debug(
+					"Daily territory refresh skipped for {} (no dirty chunks)",
+					level.dimension().location()
+			);
+			return;
+		}
+
+		Map<Long, ChunkState> neighborContext = buildNeighborContext(data, dirtyKeys);
+		List<DailyChunkSnapshot> snapshots = captureSnapshots(level, data, safeChecker, dirtyKeys);
 		MinecraftServer server = level.getServer();
 
 		EXECUTOR.submit(() -> {
-			DailyComputeResult result = computeInParallel(snapshots, orgProvider);
-			server.execute(() -> applyResult(level, data, result));
+			DailyComputeResult result = computeInParallel(snapshots, orgProvider, neighborContext);
+			server.execute(() -> applyResult(level, data, result, dirtyKeys));
 		});
 	}
 
-	private static List<DailyChunkSnapshot> captureSnapshots(ServerLevel level, WorldRegionData data, SafeBiomeChecker safeChecker) {
-		List<DailyChunkSnapshot> snapshots = new ArrayList<>(data.getAllChunks().size());
+	private static List<DailyChunkSnapshot> captureSnapshots(
+			ServerLevel level,
+			WorldRegionData data,
+			SafeBiomeChecker safeChecker,
+			Set<Long> dirtyKeys
+	) {
+		List<DailyChunkSnapshot> snapshots = new ArrayList<>(dirtyKeys.size());
 
-		for (Map.Entry<Long, ChunkTerritoryData> entry : data.getAllChunks().entrySet()) {
-			long chunkKey = entry.getKey();
-			ChunkTerritoryData chunk = entry.getValue();
+		for (long chunkKey : dirtyKeys) {
+			ChunkTerritoryData chunk = data.getChunk(chunkKey);
+			if (chunk == null) {
+				continue;
+			}
+
 			ChunkPos chunkPos = new ChunkPos(chunkKey);
-
 			Map<UUID, Integer> modifiers = new HashMap<>(chunk.getScoreModifiers());
 			ChunkStateMachine.applyDeathRecoveryToModifiers(chunk.getState(), modifiers);
 
@@ -71,7 +89,27 @@ public final class TerritoryDailyProcessor {
 		return snapshots;
 	}
 
-	private static DailyComputeResult computeInParallel(List<DailyChunkSnapshot> snapshots, OrganizationProvider orgProvider) {
+	private static Map<Long, ChunkState> buildNeighborContext(WorldRegionData data, Set<Long> dirtyKeys) {
+		Map<Long, ChunkState> context = new HashMap<>();
+		for (long dirtyKey : dirtyKeys) {
+			ChunkPos pos = new ChunkPos(dirtyKey);
+			for (ChunkPos neighbor : getNeighbors(pos)) {
+				long neighborKey = neighbor.toLong();
+				if (dirtyKeys.contains(neighborKey) || context.containsKey(neighborKey)) {
+					continue;
+				}
+				ChunkTerritoryData chunk = data.getChunk(neighborKey);
+				context.put(neighborKey, chunk == null ? ChunkState.NATURAL : chunk.getState());
+			}
+		}
+		return context;
+	}
+
+	private static DailyComputeResult computeInParallel(
+			List<DailyChunkSnapshot> snapshots,
+			OrganizationProvider orgProvider,
+			Map<Long, ChunkState> neighborContext
+	) {
 		List<DailyChunkSnapshot> computedSnapshots = snapshots.parallelStream()
 				.map(snapshot -> {
 					Map<UUID, Integer> cachedScores = ChunkScoreEngine.computeTotalScores(
@@ -96,7 +134,7 @@ public final class TerritoryDailyProcessor {
 			occupyingOrgs.put(snapshot.chunkKey(), base.occupyingOrg());
 		}
 
-		Map<Long, ChunkState> finalStates = ChunkStateMachine.deriveBorderStatesFromBaseStates(baseStates);
+		Map<Long, ChunkState> finalStates = ChunkStateMachine.deriveBorderStatesFromBaseStates(baseStates, neighborContext);
 
 		for (DailyChunkSnapshot snapshot : computedSnapshots) {
 			ChunkState state = finalStates.get(snapshot.chunkKey());
@@ -109,7 +147,12 @@ public final class TerritoryDailyProcessor {
 		return new DailyComputeResult(finalStates, occupyingOrgs, snapshotByKey);
 	}
 
-	private static void applyResult(ServerLevel level, WorldRegionData data, DailyComputeResult result) {
+	private static void applyResult(
+			ServerLevel level,
+			WorldRegionData data,
+			DailyComputeResult result,
+			Set<Long> dirtyKeys
+	) {
 		try {
 			for (Map.Entry<Long, ChunkState> entry : result.finalStates().entrySet()) {
 				long chunkKey = entry.getKey();
@@ -148,19 +191,29 @@ public final class TerritoryDailyProcessor {
 			}
 
 			data.getEntityChunkIndex().rebuildOccupiedFrom(data.getAllChunks());
-			data.getDirtyChunkKeys().clear();
+			data.getDirtyChunkKeys().removeAll(dirtyKeys);
 			data.finishDailyRefresh();
 			data.setDirty();
 
 			PlayerBlockStatus.LOGGER.info(
-					"Daily territory refresh completed for {} ({} chunks)",
+					"Daily territory refresh completed for {} ({} dirty chunks, {} state updates)",
 					level.dimension().location(),
+					dirtyKeys.size(),
 					result.finalStates().size()
 			);
 		} catch (Exception exception) {
 			data.cancelDailyRefreshInProgress();
 			PlayerBlockStatus.LOGGER.error("Daily territory refresh failed for {}", level.dimension().location(), exception);
 		}
+	}
+
+	private static ChunkPos[] getNeighbors(ChunkPos pos) {
+		return new ChunkPos[] {
+				new ChunkPos(pos.x - 1, pos.z),
+				new ChunkPos(pos.x + 1, pos.z),
+				new ChunkPos(pos.x, pos.z - 1),
+				new ChunkPos(pos.x, pos.z + 1)
+		};
 	}
 
 	private static boolean allScoresPositive(Map<UUID, Integer> scores) {

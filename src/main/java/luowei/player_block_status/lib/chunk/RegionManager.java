@@ -11,7 +11,7 @@ import luowei.player_block_status.lib.api.OrganizationProvider;
 import luowei.player_block_status.lib.api.SafeBiomeChecker;
 
 /**
- * 维度领土管理器：事件只记账与标脏，全盘重算仅在每日日出异步执行。
+ * 维度领土管理器：事件只记账与标脏，重算仅在每日日出对标脏区块异步执行。
  */
 public final class RegionManager {
 	private RegionManager() {

@@ -20,6 +20,7 @@ import luowei.player_block_status.lib.api.PlayerBlockStatusLib;
 import luowei.player_block_status.lib.chunk.RegionManager;
 import luowei.player_block_status.lib.chunk.TerritoryConfig;
 import luowei.player_block_status.lib.debug.ChunkDebugMapRenderer;
+import luowei.player_block_status.lib.org.OrganizationCommands;
 
 /**
  * 注册方块、停留、死亡与每日刷新事件。
@@ -53,8 +54,9 @@ public final class TerritoryEventHandler {
 
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
 			dispatcher.register(Commands.literal("pbs")
-					.requires(source -> source.hasPermission(2))
+					.then(OrganizationCommands.buildOrgNode())
 					.then(Commands.literal("query")
+							.requires(source -> source.hasPermission(2))
 							.then(Commands.argument("pos", BlockPosArgument.blockPos())
 									.executes(context -> {
 										BlockPos pos = BlockPosArgument.getLoadedBlockPos(context, "pos");
@@ -65,11 +67,13 @@ public final class TerritoryEventHandler {
 										return 1;
 									})))
 					.then(Commands.literal("map")
+							.requires(source -> source.hasPermission(2))
 							.executes(context -> exportMap(context.getSource(), context.getSource().getLevel(), 32))
 							.then(Commands.argument("radius", com.mojang.brigadier.arguments.IntegerArgumentType.integer(1, 512))
 									.executes(context -> exportMap(context.getSource(), context.getSource().getLevel(),
 											com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(context, "radius")))))
 					.then(Commands.literal("legend")
+							.requires(source -> source.hasPermission(2))
 							.executes(context -> {
 								context.getSource().sendSuccess(() -> Component.literal(ChunkDebugMapRenderer.legendText()), false);
 								return 1;

@@ -186,33 +186,39 @@ public class WorldRegionData extends SavedData {
 	}
 
 	public void transferPlayerToOrg(UUID playerId, UUID orgId) {
-		Set<Long> affectedChunks = new HashSet<>(entityChunkIndex.getChunks(playerId));
+		Set<Long> affectedChunks = findChunksForEntity(playerId);
 		for (long chunkKey : affectedChunks) {
 			ChunkTerritoryData chunk = chunks.get(chunkKey);
 			if (chunk == null) {
 				continue;
 			}
-			chunk.remapEntity(playerId, orgId);
-			if (chunk.isDirty()) {
-				markChunkDirty(chunkKey);
-			}
+			chunk.remapEntitySilent(playerId, orgId);
 		}
+		entityChunkIndex.transferPlayerToOrg(playerId, orgId);
 		setDirty();
 	}
 
 	public void remapOrganization(UUID from, UUID to) {
-		Set<Long> affectedChunks = new HashSet<>(entityChunkIndex.getChunks(from));
+		Set<Long> affectedChunks = findChunksForEntity(from);
 		for (long chunkKey : affectedChunks) {
 			ChunkTerritoryData chunk = chunks.get(chunkKey);
 			if (chunk == null) {
 				continue;
 			}
-			chunk.remapEntity(from, to);
-			if (chunk.isDirty()) {
-				markChunkDirty(chunkKey);
+			chunk.remapEntitySilent(from, to);
+		}
+		entityChunkIndex.mergeOrganization(from, to);
+		setDirty();
+	}
+
+	private Set<Long> findChunksForEntity(UUID entityId) {
+		Set<Long> affectedChunks = new HashSet<>();
+		for (Map.Entry<Long, ChunkTerritoryData> entry : chunks.entrySet()) {
+			if (entry.getValue().referencesEntity(entityId)) {
+				affectedChunks.add(entry.getKey());
 			}
 		}
-		setDirty();
+		return affectedChunks;
 	}
 
 	private void maybeRemoveEmptyChunk(long chunkKey, ChunkTerritoryData chunk) {
