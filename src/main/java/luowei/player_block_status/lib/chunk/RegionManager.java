@@ -51,14 +51,36 @@ public final class RegionManager {
 		data.registerStructure(bounds);
 	}
 
+	/**
+	 * 每日重算触发：{@code currentDay > lastDailyDay} 且 {@code timeOfDay >= dailyRefreshTime}。
+	 * 不再要求精确落在单个 tick，避免服务器 lag 跳过日出时刻。
+	 */
 	public static void tickDaily(ServerLevel level, OrganizationProvider orgProvider, SafeBiomeChecker safeChecker) {
-		long day = level.getDayTime() / 24000L;
-		int timeOfDay = (int) (level.getDayTime() % 24000L);
+		long dayTime = level.getDayTime();
+		long currentDay = dayTime / 24000L;
+		int timeOfDay = (int) (dayTime % 24000L);
+		WorldRegionData data = WorldRegionData.get(level);
+		long lastDailyDay = data.getLastDailyDay();
 
-		if (timeOfDay != TerritoryConfig.dailyRefreshTime) {
+		if (currentDay <= lastDailyDay) {
 			return;
 		}
 
-		TerritoryDailyProcessor.trySchedule(level, orgProvider, safeChecker, day);
+		if (timeOfDay < TerritoryConfig.dailyRefreshTime) {
+			return;
+		}
+
+		// PlayerBlockStatus.LOGGER.info(
+		// 		"[pbs daily] day rollover ready for {}: currentDay={}, lastDailyDay={}, timeOfDay={}, refreshTime={}, dirtyChunks={}, activeChunks={}",
+		// 		level.dimension().location(),
+		// 		currentDay,
+		// 		lastDailyDay,
+		// 		timeOfDay,
+		// 		TerritoryConfig.dailyRefreshTime,
+		// 		data.getDirtyChunkKeys().size(),
+		// 		data.getActiveChunkKeyCount()
+		// );
+
+		TerritoryDailyProcessor.trySchedule(level, orgProvider, safeChecker, currentDay);
 	}
 }

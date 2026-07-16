@@ -31,25 +31,69 @@ public final class TerritoryDailyProcessor {
 
 	public static void trySchedule(ServerLevel level, OrganizationProvider orgProvider, SafeBiomeChecker safeChecker, long currentDay) {
 		WorldRegionData data = WorldRegionData.get(level);
-		if (!data.tryBeginDailyRefresh(currentDay)) {
+		Set<Long> recomputeKeys = data.resolveRecomputeChunkKeys();
+
+		// PlayerBlockStatus.LOGGER.info(
+		// 		"[pbs daily] trySchedule called for {} on day {} (dirtyChunks={}, activeChunks={}, recomputeChunks={})",
+		// 		level.dimension().location(),
+		// 		currentDay,
+		// 		data.getDirtyChunkKeys().size(),
+		// 		data.getActiveChunkKeyCount(),
+		// 		recomputeKeys.size()
+		// );
+
+		if (recomputeKeys.isEmpty()) {
+			// PlayerBlockStatus.LOGGER.info(
+			// 		"[pbs daily] nothing to recompute for {} on day {}, skipping without advancing lastDailyDay",
+			// 		level.dimension().location(),
+			// 		currentDay
+			// );
 			return;
 		}
 
-		Set<Long> dirtyKeys = new HashSet<>(data.getDirtyChunkKeys());
-		if (dirtyKeys.isEmpty()) {
-			data.finishDailyRefresh();
-			PlayerBlockStatus.LOGGER.debug(
-					"Daily territory refresh skipped for {} (no dirty chunks)",
-					level.dimension().location()
+		if (data.getDirtyChunkKeys().isEmpty() && !recomputeKeys.isEmpty()) {
+			PlayerBlockStatus.LOGGER.warn(
+					"[pbs daily] dirtyChunkKeys empty for {} on day {}, falling back to activeChunkKeys ({})",
+					level.dimension().location(),
+					currentDay,
+					recomputeKeys.size()
+			);
+		}
+
+		if (!data.tryBeginDailyRefresh(currentDay)) {
+			PlayerBlockStatus.LOGGER.info(
+					"[pbs daily] trySchedule aborted for {} on day {} (tryBeginDailyRefresh returned false)",
+					level.dimension().location(),
+					currentDay
 			);
 			return;
 		}
 
+		Set<Long> dirtyKeys = new HashSet<>(recomputeKeys);
+
+		PlayerBlockStatus.LOGGER.info(
+				"[pbs daily] scheduling async recompute for {} on day {} (dirtyChunks={})",
+				level.dimension().location(),
+				currentDay,
+				dirtyKeys.size()
+		);
+
 		Map<Long, ChunkState> neighborContext = buildNeighborContext(data, dirtyKeys);
 		List<DailyChunkSnapshot> snapshots = captureSnapshots(level, data, safeChecker, dirtyKeys);
+		PlayerBlockStatus.LOGGER.info(
+				"[pbs daily] captured {} snapshots for {} (requested dirty={})",
+				snapshots.size(),
+				level.dimension().location(),
+				dirtyKeys.size()
+		);
+
 		MinecraftServer server = level.getServer();
 
 		EXECUTOR.submit(() -> {
+			PlayerBlockStatus.LOGGER.info(
+					"[pbs daily] async compute started for {} on worker thread",
+					level.dimension().location()
+			);
 			DailyComputeResult result = computeInParallel(snapshots, orgProvider, neighborContext);
 			server.execute(() -> applyResult(level, data, result, dirtyKeys));
 		});
@@ -64,8 +108,12 @@ public final class TerritoryDailyProcessor {
 		List<DailyChunkSnapshot> snapshots = new ArrayList<>(dirtyKeys.size());
 
 		for (long chunkKey : dirtyKeys) {
-			ChunkTerritoryData chunk = data.getChunk(chunkKey);
+			ChunkTerritoryData chunk = data.getChunkForRecompute(chunkKey);
 			if (chunk == null) {
+				PlayerBlockStatus.LOGGER.warn(
+						"[pbs daily] snapshot skipped for {}: no territory attachment found",
+						new ChunkPos(chunkKey)
+				);
 				continue;
 			}
 
@@ -112,11 +160,21 @@ public final class TerritoryDailyProcessor {
 	) {
 		List<DailyChunkSnapshot> computedSnapshots = snapshots.parallelStream()
 				.map(snapshot -> {
+					ChunkPos chunkPos = new ChunkPos(snapshot.chunkKey());
 					Map<UUID, Integer> cachedScores = ChunkScoreEngine.computeTotalScores(
 							snapshot.placedBlocks(),
 							snapshot.stayScores(),
 							snapshot.scoreModifiers(),
 							orgProvider
+					);
+					PlayerBlockStatus.LOGGER.info(
+							"[pbs daily][{}] score compute: placedBlocks={}, stayScores={}, modifiers={}, blockScorePerBlock={}, totals={}",
+							chunkPos,
+							snapshot.placedBlocks().size(),
+							snapshot.stayScores(),
+							snapshot.scoreModifiers(),
+							TerritoryConfig.blockScorePerBlock,
+							cachedScores
 					);
 					return snapshot.withCachedScores(cachedScores);
 				})
@@ -132,6 +190,14 @@ public final class TerritoryDailyProcessor {
 			BaseStateResult base = ChunkStateMachine.computeBaseStateFromSnapshot(snapshot);
 			baseStates.put(snapshot.chunkKey(), base.state());
 			occupyingOrgs.put(snapshot.chunkKey(), base.occupyingOrg());
+			PlayerBlockStatus.LOGGER.info(
+					"[pbs daily][{}] base state: {} -> {}, org={}, threshold={}",
+					new ChunkPos(snapshot.chunkKey()),
+					snapshot.previousState(),
+					base.state(),
+					base.occupyingOrg(),
+					TerritoryConfig.occupationThreshold
+			);
 		}
 
 		Map<Long, ChunkState> finalStates = ChunkStateMachine.deriveBorderStatesFromBaseStates(baseStates, neighborContext);
@@ -172,6 +238,13 @@ public final class TerritoryDailyProcessor {
 					chunk.setOccupyingOrg(result.occupyingOrgs().get(chunkKey));
 					chunk.clearStayScores();
 					chunk.clearDirty();
+					PlayerBlockStatus.LOGGER.info(
+							"[pbs daily][{}] applied: state={}, org={}, cachedScores={}",
+							new ChunkPos(chunkKey),
+							finalState,
+							result.occupyingOrgs().get(chunkKey),
+							snapshot.cachedScores()
+					);
 					continue;
 				}
 
@@ -195,10 +268,12 @@ public final class TerritoryDailyProcessor {
 			data.finishDailyRefresh();
 
 			PlayerBlockStatus.LOGGER.info(
-					"Daily territory refresh completed for {} ({} dirty chunks, {} state updates)",
+					"[pbs daily] completed for {} (day={}, dirtyChunks={}, stateUpdates={}, lastDailyDay={})",
 					level.dimension().location(),
+					data.getLastDailyDay(),
 					dirtyKeys.size(),
-					result.finalStates().size()
+					result.finalStates().size(),
+					data.getLastDailyDay()
 			);
 		} catch (Exception exception) {
 			data.cancelDailyRefreshInProgress();

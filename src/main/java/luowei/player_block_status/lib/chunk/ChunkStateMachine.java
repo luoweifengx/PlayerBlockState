@@ -63,6 +63,7 @@ public final class ChunkStateMachine {
 
 	/**
 	 * 以每个 BORDER 为中心，向外延伸 {@link TerritoryConfig#hostileBorderExtensionChunks} 格（切比雪夫距离）内的自然/无记录区块 → HOSTILE_BORDER。
+	 * 准确收缩时可维护 BORDER 区块索引，仅对索引项局部重算敌对边界，避免全图遍历。
 	 */
 	private static void deriveHostileBordersFromBorderChunks(Map<Long, ChunkState> states, List<Long> borderKeys) {
 		int extension = TerritoryConfig.hostileBorderExtensionChunks;
@@ -137,7 +138,7 @@ public final class ChunkStateMachine {
 		if (wasOccupiedFamily) {
 			if (allScoresBelowNaturalReturn(chunk)) {
 				chunk.setOccupyingOrg(null);
-				return ChunkState.NATURAL;
+				return naturalReturnState(previous);
 			}
 			chunk.setOccupyingOrg(resolveOccupyingOrgWithTakeoverRule(chunk, previous));
 			return ChunkState.OCCUPIED;
@@ -149,7 +150,12 @@ public final class ChunkStateMachine {
 		}
 
 		chunk.setOccupyingOrg(null);
-		return ChunkState.NATURAL;
+		return naturalReturnState(previous);
+	}
+
+	/** 原应退回自然时，敌对边界保持不变（不自动收缩；见 {@link #deriveHostileBordersFromBorderChunks} 注释）。 */
+	private static ChunkState naturalReturnState(ChunkState previous) {
+		return previous == ChunkState.HOSTILE_BORDER ? ChunkState.HOSTILE_BORDER : ChunkState.NATURAL;
 	}
 
 	public static void deriveBorderStates(Map<Long, ChunkTerritoryData> chunks, Set<Long> affectedKeys) {

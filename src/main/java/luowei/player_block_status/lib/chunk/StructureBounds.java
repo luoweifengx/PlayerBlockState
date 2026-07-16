@@ -11,8 +11,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.UUIDUtil;
 
 /**
- * 结构生成时记录的两个顶点及内部方块列表。
- * 若有玩家在其中放置方块，则将所有方块归属该玩家并销毁此记录。
+ * 结构生成时记录的两个顶点及可选的显式方块列表。
+ * 玩家在其中放置方块后，通过 {@link StructureClaimProcessor} 对连通非空气方块做 flood-fill 认领。
  */
 public record StructureBounds(
 		UUID id,

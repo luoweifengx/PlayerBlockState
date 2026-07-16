@@ -42,10 +42,9 @@ public final class WorldRegionData {
 		DimensionTerritoryData dimensionData = DimensionTerritoryData.get(level);
 		if (trace != null) {
 			trace.step(
-					"DimensionTerritoryData loaded in %dms (activeChunkKeys=%d legacyPending=%d)",
+					"DimensionTerritoryData loaded in %dms (activeChunkKeys=%d)",
 					(System.nanoTime() - loadStart) / 1_000_000L,
-					dimensionData.getActiveChunkKeys().size(),
-					dimensionData.getLegacyPendingChunkCount()
+					dimensionData.getActiveChunkKeys().size()
 			);
 		}
 		return new WorldRegionData(level, dimensionData);
@@ -53,14 +52,6 @@ public final class WorldRegionData {
 
 	public ChunkTerritoryData getOrCreateChunk(long chunkKey) {
 		ChunkPos chunkPos = new ChunkPos(chunkKey);
-		ChunkTerritoryData legacy = dimensionData.pollLegacyChunk(chunkKey);
-		if (legacy != null) {
-			ChunkTerritoryAccess.attach(level, chunkPos, legacy);
-			trackActiveChunk(chunkKey);
-			dimensionData.flushLegacyMigration();
-			return legacy;
-		}
-
 		ChunkTerritoryData chunk = ChunkTerritoryAccess.getOrCreate(level, chunkPos);
 		if (chunk.hasTerritoryData()) {
 			trackActiveChunk(chunkKey);
@@ -69,11 +60,18 @@ public final class WorldRegionData {
 	}
 
 	public ChunkTerritoryData getChunk(long chunkKey) {
-		if (dimensionData.hasLegacyChunk(chunkKey)) {
-			return dimensionData.peekLegacyChunk(chunkKey);
-		}
-
 		ChunkTerritoryData chunk = ChunkTerritoryAccess.getIfPresent(level, new ChunkPos(chunkKey));
+		if (chunk == null || !chunk.hasTerritoryData()) {
+			return null;
+		}
+		return chunk;
+	}
+
+	/** 每日重算/地图读取：只要 attachment 有数据即返回，必要时触发 chunk 加载。 */
+	public ChunkTerritoryData getChunkForRecompute(long chunkKey) {
+		ChunkPos chunkPos = new ChunkPos(chunkKey);
+		level.getChunk(chunkPos.x, chunkPos.z);
+		ChunkTerritoryData chunk = ChunkTerritoryAccess.getIfPresent(level, chunkPos);
 		if (chunk == null || !chunk.hasTerritoryData()) {
 			return null;
 		}
@@ -87,18 +85,12 @@ public final class WorldRegionData {
 	Map<Long, ChunkTerritoryData> collectAllChunks() {
 		Map<Long, ChunkTerritoryData> chunks = new HashMap<>();
 		for (long chunkKey : new HashSet<>(dimensionData.getActiveChunkKeys())) {
-			ChunkTerritoryData chunk = getChunk(chunkKey);
-			if (chunk != null && chunk.hasTerritoryData()) {
+			ChunkTerritoryData chunk = getChunkForRecompute(chunkKey);
+			if (chunk != null) {
 				chunks.put(chunkKey, chunk);
 				continue;
 			}
 			untrackActiveChunk(chunkKey);
-		}
-
-		for (long chunkKey : new HashSet<>(dimensionData.getActiveChunkKeys())) {
-			if (dimensionData.hasLegacyChunk(chunkKey)) {
-				chunks.put(chunkKey, dimensionData.peekLegacyChunk(chunkKey));
-			}
 		}
 		return chunks;
 	}
@@ -108,11 +100,39 @@ public final class WorldRegionData {
 	}
 
 	public void markChunkDirty(long chunkKey) {
-		dirtyChunkKeys.add(chunkKey);
+		if (dirtyChunkKeys.add(chunkKey)) {
+			PlayerBlockStatus.LOGGER.debug(
+					"[pbs daily] chunk {} marked dirty (dirtyCount={}, activeCount={})",
+					new ChunkPos(chunkKey),
+					dirtyChunkKeys.size(),
+					dimensionData.getActiveChunkKeys().size()
+			);
+		}
 	}
 
 	public Set<Long> getDirtyChunkKeys() {
 		return dirtyChunkKeys;
+	}
+
+	public int getActiveChunkKeyCount() {
+		return dimensionData.getActiveChunkKeys().size();
+	}
+
+	public Set<Long> getActiveChunkKeys() {
+		return Set.copyOf(dimensionData.getActiveChunkKeys());
+	}
+
+	/**
+	 * 解析本次每日重算应处理的区块：优先 dirty，否则回退到持久化的 activeChunkKeys。
+	 * dirty 集合仅存在于内存，重启后会丢失，因此必须回退。
+	 */
+	public Set<Long> resolveRecomputeChunkKeys() {
+		Set<Long> keys = new HashSet<>(dirtyChunkKeys);
+		if (!keys.isEmpty()) {
+			return keys;
+		}
+		keys.addAll(dimensionData.getActiveChunkKeys());
+		return keys;
 	}
 
 	public List<StructureBounds> getPendingStructures() {
@@ -150,6 +170,30 @@ public final class WorldRegionData {
 		long chunkKey = new ChunkPos(pos).toLong();
 		ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
 		chunk.addPlacedBlock(pos, scoreEntity);
+		persistChunkChange(chunkKey, chunk);
+		markChunkDirty(chunkKey);
+		PlayerBlockStatus.LOGGER.info(
+				"[pbs] block placed at {} in chunk {} by {} (placedCount={}, dirtyCount={})",
+				pos,
+				new ChunkPos(chunkKey),
+				scoreEntity,
+				chunk.getPlacedBlocks().size(),
+				dirtyChunkKeys.size()
+		);
+	}
+
+	public UUID getPlacedBlockOwner(BlockPos pos) {
+		ChunkTerritoryData chunk = ChunkTerritoryAccess.getIfPresent(level, new ChunkPos(pos));
+		if (chunk == null) {
+			return null;
+		}
+		return chunk.getPlacedBlockOwner(pos);
+	}
+
+	public void claimStructureBlock(BlockPos pos, UUID owner) {
+		long chunkKey = new ChunkPos(pos).toLong();
+		ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
+		chunk.addPlacedBlock(pos, owner);
 		persistChunkChange(chunkKey, chunk);
 		markChunkDirty(chunkKey);
 	}
@@ -206,7 +250,7 @@ public final class WorldRegionData {
 	}
 
 	public Optional<ChunkTerritoryData> queryChunk(ChunkPos chunkPos) {
-		ChunkTerritoryData chunk = getChunk(chunkPos.toLong());
+		ChunkTerritoryData chunk = getChunkForRecompute(chunkPos.toLong());
 		return Optional.ofNullable(chunk);
 	}
 
@@ -249,16 +293,9 @@ public final class WorldRegionData {
 				continue;
 			}
 
-			for (BlockPos blockPos : bounds.resolvedBlocks()) {
-				long chunkKey = new ChunkPos(blockPos).toLong();
-				ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
-				chunk.addPlacedBlock(blockPos, scoreEntity);
-				persistChunkChange(chunkKey, chunk);
-				markChunkDirty(chunkKey);
-			}
+			StructureClaimProcessor.enqueue(level, this, bounds, placedPos, scoreEntity);
 			iterator.remove();
 			dimensionData.setDirty();
-			PlayerBlockStatus.LOGGER.info("Structure {} claimed by {}", bounds.id(), scoreEntity);
 		}
 	}
 

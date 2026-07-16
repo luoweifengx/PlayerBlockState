@@ -25,11 +25,6 @@ public final class ChunkTerritoryAccess {
 		level.getChunk(chunkPos.x, chunkPos.z).markUnsaved();
 	}
 
-	public static void attach(ServerLevel level, ChunkPos chunkPos, ChunkTerritoryData data) {
-		LevelChunk chunk = level.getChunk(chunkPos.x, chunkPos.z);
-		chunk.setAttached(TerritoryAttachments.CHUNK_TERRITORY, data);
-	}
-
 	public static void clearIfEmpty(ServerLevel level, ChunkPos chunkPos, ChunkTerritoryData data) {
 		if (data.hasTerritoryData()) {
 			markDirty(level, chunkPos);

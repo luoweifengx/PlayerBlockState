@@ -135,7 +135,12 @@ public class ChunkTerritoryData {
 	}
 
 	public boolean hasTerritoryData() {
-		return !placedBlocks.isEmpty() || !scoreModifiers.isEmpty() || !stayScores.isEmpty();
+		return !placedBlocks.isEmpty()
+				|| !scoreModifiers.isEmpty()
+				|| !stayScores.isEmpty()
+				|| !cachedScores.isEmpty()
+				|| state != ChunkState.NATURAL
+				|| occupyingOrg != null;
 	}
 
 	public void accumulateStayScore(UUID entityId, int delta) {

@@ -28,6 +28,7 @@ import luowei.player_block_status.PlayerBlockStatus;
 import luowei.player_block_status.lib.api.PlayerBlockStatusLib;
 import luowei.player_block_status.lib.chunk.ChunkState;
 import luowei.player_block_status.lib.chunk.RegionManager;
+import luowei.player_block_status.lib.chunk.StructureClaimProcessor;
 import luowei.player_block_status.lib.chunk.TerritoryConfig;
 import luowei.player_block_status.lib.debug.ChunkDebugMapRenderer;
 import luowei.player_block_status.lib.debug.MapExportTrace;
@@ -63,6 +64,8 @@ public final class TerritoryEventHandler {
 			for (ServerPlayer player : serverLevel.players()) {
 				tickPlayerStay(serverLevel, player);
 			}
+
+			StructureClaimProcessor.tick(serverLevel);
 
 			RegionManager.tickDaily(serverLevel,
 					PlayerBlockStatusLib.getOrganizationProvider(),

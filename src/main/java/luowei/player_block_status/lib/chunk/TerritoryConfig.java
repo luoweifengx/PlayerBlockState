@@ -23,6 +23,8 @@ public final class TerritoryConfig {
 	public static int hostileBorderExtensionChunks = 2;
 	/** 世界日时间（0-24000）触发每日刷新的时刻 */
 	public static int dailyRefreshTime = 0;
+	/** 结构认领 flood-fill 每 tick 最多写入的方块数 */
+	public static int structureClaimBlocksPerTick = 512;
 
 	private TerritoryConfig() {
 	}
