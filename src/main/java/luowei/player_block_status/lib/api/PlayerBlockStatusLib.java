@@ -20,6 +20,7 @@ import luowei.player_block_status.lib.chunk.StructureBounds;
 import luowei.player_block_status.lib.chunk.TerritoryDailyProcessor.ScheduleAttempt;
 import luowei.player_block_status.lib.chunk.WorldRegionData;
 import luowei.player_block_status.lib.debug.ChunkDebugMapRenderer;
+import luowei.player_block_status.lib.org.EntityDisplayNames;
 import luowei.player_block_status.lib.org.EntityPollList;
 import luowei.player_block_status.lib.org.OrganizationService;
 import luowei.player_block_status.lib.structure.StructureTerritoryRegistry;
@@ -192,12 +193,25 @@ public final class PlayerBlockStatusLib {
 		return luowei.player_block_status.lib.org.OrganizationService.getOrganization(server, orgId);
 	}
 
+	/**
+	 * 将玩家或组织 UUID 解析为对外显示名。组织用组织名，玩家用持久化名称；
+	 * 旧数据无名称时回退到档案缓存或 UUID 字符串。
+	 */
+	public static String resolveEntityDisplayName(MinecraftServer server, UUID entityId) {
+		return EntityDisplayNames.resolve(server, entityId);
+	}
+
 	public static Path exportDebugMap(ServerLevel level, ChunkPos center, int radiusChunks, Path outputPath) {
 		return ChunkDebugMapRenderer.render(level, center, radiusChunks, outputPath);
 	}
 
 	public static Path exportDebugMap(ServerLevel level, Path outputPath) {
 		return ChunkDebugMapRenderer.renderFull(level, outputPath);
+	}
+
+	/** 导出领土划分图：按所属玩家/组织邻接着色，死亡为黑，其余为白。 */
+	public static Path exportOwnerMap(ServerLevel level, ChunkPos center, int radiusChunks, Path outputPath) {
+		return ChunkDebugMapRenderer.renderOwnerMap(level, center, radiusChunks, outputPath);
 	}
 
 	/**

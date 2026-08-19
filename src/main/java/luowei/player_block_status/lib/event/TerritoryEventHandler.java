@@ -3,6 +3,7 @@ package luowei.player_block_status.lib.event;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -18,22 +19,28 @@ import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.storage.LevelResource;
 
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 
 import luowei.player_block_status.PlayerBlockStatus;
 import luowei.player_block_status.lib.api.PlayerBlockStatusLib;
-import luowei.player_block_status.lib.chunk.ChunkState;
+import luowei.player_block_status.lib.chunk.ChunkTerritoryAccess;
+import luowei.player_block_status.lib.chunk.ChunkTerritoryData;
 import luowei.player_block_status.lib.chunk.RegionManager;
 import luowei.player_block_status.lib.chunk.StructureClaimProcessor;
 import luowei.player_block_status.lib.chunk.TerritoryConfig;
 import luowei.player_block_status.lib.debug.ChunkDebugMapRenderer;
+import luowei.player_block_status.lib.debug.ChunkDebugMapRenderer.ChunkMapCell;
 import luowei.player_block_status.lib.debug.ChunkForceCommands;
 import luowei.player_block_status.lib.debug.MapExportTrace;
+import luowei.player_block_status.lib.org.EntityDisplayNames;
 import luowei.player_block_status.lib.org.OrganizationCommands;
 import luowei.player_block_status.lib.structure.StructureSentinelWriteQueue;
 
@@ -96,36 +103,8 @@ public final class TerritoryEventHandler {
 										context.getSource().sendSuccess(() -> Component.literal(info.toString()), false);
 										return 1;
 									})))
-					.then(Commands.literal("map")
-							.requires(source -> source.hasPermission(2))
-							.then(Commands.literal("spawn")
-									.executes(context -> scheduleMapExport(
-											context.getSource(),
-											context.getSource().getLevel(),
-											new ChunkPos(context.getSource().getLevel().getSharedSpawnPos()),
-											32,
-											"spawn"
-									))
-									.then(Commands.argument("radius", IntegerArgumentType.integer(1, MAP_RADIUS_MAX))
-											.executes(context -> scheduleMapExport(
-													context.getSource(),
-													context.getSource().getLevel(),
-													new ChunkPos(context.getSource().getLevel().getSharedSpawnPos()),
-													IntegerArgumentType.getInteger(context, "radius"),
-													"spawn"
-											))))
-							.then(Commands.argument("player", EntityArgument.player())
-									.then(Commands.argument("radius", IntegerArgumentType.integer(1, MAP_RADIUS_MAX))
-											.executes(context -> {
-												ServerPlayer target = EntityArgument.getPlayer(context, "player");
-												return scheduleMapExport(
-														context.getSource(),
-														target.serverLevel(),
-														target.chunkPosition(),
-														IntegerArgumentType.getInteger(context, "radius"),
-														target.getGameProfile().getName()
-												);
-											}))))
+					.then(buildMapNode("map", false))
+					.then(buildMapNode("mapplayer", true))
 					.then(Commands.literal("legend")
 							.requires(source -> source.hasPermission(2))
 							.executes(context -> {
@@ -137,18 +116,56 @@ public final class TerritoryEventHandler {
 		PlayerBlockStatus.LOGGER.info("Territory event handler registered");
 	}
 
+	private static LiteralArgumentBuilder<CommandSourceStack> buildMapNode(String name, boolean ownerMap) {
+		return Commands.literal(name)
+				.requires(source -> source.hasPermission(2))
+				.then(Commands.literal("spawn")
+						.executes(context -> scheduleMapExport(
+								context.getSource(),
+								context.getSource().getLevel(),
+								new ChunkPos(context.getSource().getLevel().getSharedSpawnPos()),
+								32,
+								"spawn",
+								ownerMap
+						))
+						.then(Commands.argument("radius", IntegerArgumentType.integer(1, MAP_RADIUS_MAX))
+								.executes(context -> scheduleMapExport(
+										context.getSource(),
+										context.getSource().getLevel(),
+										new ChunkPos(context.getSource().getLevel().getSharedSpawnPos()),
+										IntegerArgumentType.getInteger(context, "radius"),
+										"spawn",
+										ownerMap
+								))))
+				.then(Commands.argument("player", EntityArgument.player())
+						.then(Commands.argument("radius", IntegerArgumentType.integer(1, MAP_RADIUS_MAX))
+								.executes(context -> {
+									ServerPlayer target = EntityArgument.getPlayer(context, "player");
+									return scheduleMapExport(
+											context.getSource(),
+											target.serverLevel(),
+											target.chunkPosition(),
+											IntegerArgumentType.getInteger(context, "radius"),
+											target.getGameProfile().getName(),
+											ownerMap
+									);
+								})));
+	}
+
 	private static int scheduleMapExport(
 			CommandSourceStack source,
 			ServerLevel level,
 			ChunkPos center,
 			int radius,
-			String label
+			String label,
+			boolean ownerMap
 	) {
+		String filePrefix = ownerMap ? "pbs-chunk-mapplayer-" : "pbs-chunk-map-";
 		Path path = level.getServer().getWorldPath(LevelResource.ROOT)
-				.resolve("pbs-chunk-map-" + level.dimension().location().getPath() + "-" + sanitizeFileLabel(label) + ".png");
+				.resolve(filePrefix + level.dimension().location().getPath() + "-" + sanitizeFileLabel(label) + ".png");
 
 		MapExportTrace trace = new MapExportTrace(label);
-		trace.step("command accepted, center=%s radius=%d output=%s", center, radius, path);
+		trace.step("command accepted, ownerMap=%s center=%s radius=%d output=%s", ownerMap, center, radius, path);
 
 		source.sendSuccess(
 				() -> Component.literal("Exporting chunk map (radius " + radius + ", center " + center + ")..."),
@@ -159,12 +176,20 @@ public final class TerritoryEventHandler {
 
 		level.getServer().execute(() -> {
 			trace.step("server task running on %s", Thread.currentThread().getName());
-			Map<Long, ChunkState> snapshot = ChunkDebugMapRenderer.collectChunkStates(level, center, radius, trace);
-			trace.step("snapshot ready (%d chunks), submitting PNG render to pbs-map-export", snapshot.size());
+			Map<Long, ChunkMapCell> cells = ChunkDebugMapRenderer.collectChunkCells(level, center, radius, trace);
+			Map<UUID, String> ownerNames = ownerMap
+					? ChunkDebugMapRenderer.resolveOwnerNames(level.getServer(), cells)
+					: Map.of();
+			trace.step("snapshot ready (%d chunks), submitting PNG render to pbs-map-export", cells.size());
 			CompletableFuture.runAsync(
 					() -> {
 						trace.step("PNG render started on %s", Thread.currentThread().getName());
-						ChunkDebugMapRenderer.renderFromStates(snapshot, center, radius, path, trace);
+						if (ownerMap) {
+							ChunkDebugMapRenderer.renderOwnerMapFromCells(cells, center, radius, path, ownerNames, trace);
+						} else {
+							ChunkDebugMapRenderer.renderFromStates(
+									ChunkDebugMapRenderer.toStates(cells), center, radius, path, trace);
+						}
 						trace.step("PNG render finished on worker thread");
 					},
 					MAP_EXPORT_EXECUTOR
@@ -193,10 +218,18 @@ public final class TerritoryEventHandler {
 	private static void tickPlayerStay(ServerLevel level, ServerPlayer player) {
 		PlayerStayTracker tracker = STAY_TRACKERS.computeIfAbsent(player.getUUID(), id -> new PlayerStayTracker());
 		ChunkPos currentChunk = player.chunkPosition();
+		UUID currentOwner = resolveTerritoryOwner(level, currentChunk);
 
-		if (!currentChunk.equals(tracker.lastChunk)) {
+		if (tracker.lastChunk == null
+				|| tracker.lastDimension == null
+				|| !currentChunk.equals(tracker.lastChunk)
+				|| !level.dimension().equals(tracker.lastDimension)) {
+			UUID previousOwner = tracker.lastOwner;
 			tracker.lastChunk = currentChunk;
+			tracker.lastDimension = level.dimension();
+			tracker.lastOwner = currentOwner;
 			tracker.tickCounter = 0;
+			maybeNotifyTerritoryEnter(player, previousOwner, currentOwner);
 			return;
 		}
 
@@ -206,6 +239,25 @@ public final class TerritoryEventHandler {
 			RegionManager.onPlayerStay(level, player, currentChunk,
 					PlayerBlockStatusLib.getOrganizationProvider());
 		}
+	}
+
+	private static UUID resolveTerritoryOwner(ServerLevel level, ChunkPos chunkPos) {
+		ChunkTerritoryData data = ChunkTerritoryAccess.getIfPresent(level, chunkPos);
+		if (data == null || data.getOccupyingOrg() == null || !data.getState().isOccupiedFamily()) {
+			return null;
+		}
+		return data.getOccupyingOrg();
+	}
+
+	private static void maybeNotifyTerritoryEnter(ServerPlayer player, UUID previousOwner, UUID currentOwner) {
+		if (!TerritoryConfig.showTerritoryEnterMessage || currentOwner == null) {
+			return;
+		}
+		if (Objects.equals(previousOwner, currentOwner)) {
+			return;
+		}
+		String name = EntityDisplayNames.resolve(player.getServer(), currentOwner);
+		player.displayClientMessage(Component.literal(name + "的领地"), true);
 	}
 
 	public static void onPlayerDeath(ServerPlayer player) {
@@ -219,7 +271,9 @@ public final class TerritoryEventHandler {
 	}
 
 	private static final class PlayerStayTracker {
-		private ChunkPos lastChunk = new ChunkPos(0, 0);
+		private ChunkPos lastChunk;
+		private ResourceKey<Level> lastDimension;
+		private UUID lastOwner;
 		private int tickCounter;
 	}
 }

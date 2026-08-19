@@ -36,6 +36,8 @@ public final class TerritoryConfig {
 	public static int dailyRefreshTime = 0;
 	/** 结构 sentinel 链式认领每 tick 最多改写的方块数 */
 	public static int structureClaimBlocksPerTick = 512;
+	/** 进入新所属领地时是否向玩家显示「xxx的领地」 */
+	public static boolean showTerritoryEnterMessage = true;
 
 	private TerritoryConfig() {
 	}

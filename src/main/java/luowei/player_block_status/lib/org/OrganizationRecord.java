@@ -15,7 +15,7 @@ import net.minecraft.core.UUIDUtil;
 public final class OrganizationRecord {
 	public static final Codec<OrganizationRecord> CODEC = RecordCodecBuilder.create(instance -> instance.group(
 			UUIDUtil.CODEC.fieldOf("id").forGetter(OrganizationRecord::id),
-			Codec.STRING.fieldOf("name").forGetter(OrganizationRecord::name),
+			Codec.STRING.optionalFieldOf("name", "").forGetter(record -> record.name == null ? "" : record.name),
 			UUIDUtil.CODEC.fieldOf("owner").forGetter(OrganizationRecord::owner),
 			UUIDUtil.CODEC.listOf().fieldOf("members").forGetter(record -> record.members.stream().toList())
 	).apply(instance, (id, name, owner, members) -> new OrganizationRecord(id, name, owner, new HashSet<>(members))));

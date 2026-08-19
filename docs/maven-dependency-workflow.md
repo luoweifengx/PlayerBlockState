@@ -1,7 +1,7 @@
 # Maven 发布与依赖维护
 
 坐标：`luowei.player_block_status:player-block-status:<mod_version>`  
-版本号在 `gradle.properties` 的 `mod_version`（当前 `1.0.13`）。
+版本号在 `gradle.properties` 的 `mod_version`（当前 `1.0.14`）。
 
 ---
 
@@ -23,14 +23,14 @@ repositories {
 }
 
 dependencies {
-	modImplementation 'luowei.player_block_status:player-block-status:1.0.13'
+	modImplementation 'luowei.player_block_status:player-block-status:1.0.14'
 }
 ```
 
 `fabric.mod.json` 增加：
 
 ```json
-"depends": { "player-block-status": ">=1.0.13" }
+"depends": { "player-block-status": ">=1.0.14" }
 ```
 
 ---

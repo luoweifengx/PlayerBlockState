@@ -6,6 +6,7 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
 
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerPlayer;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +15,7 @@ import luowei.player_block_status.lib.api.PlayerBlockStatusLib;
 import luowei.player_block_status.lib.api.StructureTerritoryContributor;
 import luowei.player_block_status.lib.chunk.TerritoryAttachments;
 import luowei.player_block_status.lib.event.TerritoryEventHandler;
+import luowei.player_block_status.lib.org.EntityDisplayNames;
 import luowei.player_block_status.lib.org.InternalOrganizationProvider;
 import luowei.player_block_status.lib.org.OrganizationData;
 import luowei.player_block_status.lib.org.OrganizationService;
@@ -35,7 +37,9 @@ public class PlayerBlockStatus implements ModInitializer {
 			LOGGER.info("Internal organization provider registered");
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-			OrganizationService.ensureSoloPlayerInPollList(server, handler.getPlayer().getUUID());
+			ServerPlayer player = handler.getPlayer();
+			OrganizationService.ensureSoloPlayerInPollList(server, player.getUUID());
+			EntityDisplayNames.updatePlayerName(server, player.getUUID(), player.getGameProfile().getName());
 		});
 		LOGGER.info("Player Block Status lib initialized");
 	}
