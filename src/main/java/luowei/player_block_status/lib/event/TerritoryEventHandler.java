@@ -9,6 +9,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.minecraft.commands.CommandSourceStack;
@@ -31,8 +32,10 @@ import luowei.player_block_status.lib.chunk.RegionManager;
 import luowei.player_block_status.lib.chunk.StructureClaimProcessor;
 import luowei.player_block_status.lib.chunk.TerritoryConfig;
 import luowei.player_block_status.lib.debug.ChunkDebugMapRenderer;
+import luowei.player_block_status.lib.debug.ChunkForceCommands;
 import luowei.player_block_status.lib.debug.MapExportTrace;
 import luowei.player_block_status.lib.org.OrganizationCommands;
+import luowei.player_block_status.lib.structure.StructureSentinelWriteQueue;
 
 /**
  * 注册方块、停留、死亡与每日刷新事件。
@@ -65,6 +68,8 @@ public final class TerritoryEventHandler {
 				tickPlayerStay(serverLevel, player);
 			}
 
+			// 先刷结构生成延后的 sentinel，再跑玩家链式认领。
+			StructureSentinelWriteQueue.tick(serverLevel);
 			StructureClaimProcessor.tick(serverLevel);
 
 			RegionManager.tickDaily(serverLevel,
@@ -72,9 +77,14 @@ public final class TerritoryEventHandler {
 					PlayerBlockStatusLib.getSafeBiomeChecker());
 		});
 
+		ServerLifecycleEvents.SERVER_STOPPING.register(StructureSentinelWriteQueue::flushAll);
+
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
 			dispatcher.register(Commands.literal("pbs")
 					.then(OrganizationCommands.buildOrgNode())
+					.then(ChunkForceCommands.buildRefreshNode())
+					.then(ChunkForceCommands.buildSetNode())
+					.then(ChunkForceCommands.buildSentinelNode())
 					.then(Commands.literal("query")
 							.requires(source -> source.hasPermission(2))
 							.then(Commands.argument("pos", BlockPosArgument.blockPos())
@@ -82,7 +92,7 @@ public final class TerritoryEventHandler {
 										BlockPos pos = BlockPosArgument.getLoadedBlockPos(context, "pos");
 										ServerLevel level = context.getSource().getLevel();
 										ChunkPos chunkPos = new ChunkPos(pos);
-										var info = luowei.player_block_status.lib.debug.ChunkQueryUtil.query(level, chunkPos);
+										var info = luowei.player_block_status.lib.api.ChunkQueryUtil.query(level, chunkPos);
 										context.getSource().sendSuccess(() -> Component.literal(info.toString()), false);
 										return 1;
 									})))

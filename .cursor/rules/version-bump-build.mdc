@@ -1,0 +1,13 @@
+---
+description: 改完代码后只抬版本号，不自动构建/发布
+alwaysApply: true
+---
+
+# 版本约定
+
+每次完成对外/本库代码改动后：
+
+1. 将 `gradle.properties` 的 `mod_version` 往后推一档，并同步 `docs/maven-dependency-workflow.md` 中的版本示例。
+2. **默认只升最小版本号（patch）**，例如 `1.0.1` → `1.0.2`。只有用户明确要求时才升 minor / major。
+3. **不要**自动执行 `build` 或 `publishToMavenLocal`。用户需要时再自行构建发布。
+---

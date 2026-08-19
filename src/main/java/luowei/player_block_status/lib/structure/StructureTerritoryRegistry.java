@@ -7,7 +7,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.level.levelgen.structure.Structure;
 
 /**
- * 结构类型注册表：决定哪些 {@link Structure} 在世界生成后写入待认领列表。
+ * 结构类型注册表：决定哪些 {@link Structure} 在世界生成时把模板方块标为 sentinel。
  * 默认跟踪全部结构；可通过白名单/黑名单收窄。
  */
 public final class StructureTerritoryRegistry {

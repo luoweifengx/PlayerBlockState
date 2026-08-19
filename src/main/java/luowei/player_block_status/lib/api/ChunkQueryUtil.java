@@ -1,4 +1,4 @@
-package luowei.player_block_status.lib.debug;
+package luowei.player_block_status.lib.api;
 
 import java.util.Map;
 import java.util.UUID;
@@ -6,7 +6,6 @@ import java.util.UUID;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 
-import luowei.player_block_status.lib.api.PlayerBlockStatusLib;
 import luowei.player_block_status.lib.chunk.ChunkState;
 import luowei.player_block_status.lib.chunk.ChunkTerritoryData;
 

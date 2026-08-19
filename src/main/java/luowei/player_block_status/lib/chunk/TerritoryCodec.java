@@ -1,7 +1,11 @@
 package luowei.player_block_status.lib.chunk;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import com.mojang.serialization.Codec;
@@ -24,6 +28,19 @@ public final class TerritoryCodec {
 			uuidMap -> {
 				Map<String, Integer> result = new HashMap<>();
 				uuidMap.forEach((key, value) -> result.put(key.toString(), value));
+				return result;
+			}
+	);
+
+	public static final Codec<Map<UUID, Set<Long>>> UUID_LONG_SET_MAP = Codec.unboundedMap(Codec.STRING, Codec.LONG.listOf()).xmap(
+			stringMap -> {
+				Map<UUID, Set<Long>> result = new HashMap<>();
+				stringMap.forEach((key, value) -> result.put(UUID.fromString(key), new HashSet<>(value)));
+				return result;
+			},
+			uuidMap -> {
+				Map<String, List<Long>> result = new HashMap<>();
+				uuidMap.forEach((key, value) -> result.put(key.toString(), new ArrayList<>(value)));
 				return result;
 			}
 	);

@@ -12,7 +12,7 @@ import net.minecraft.core.UUIDUtil;
 
 /**
  * 结构生成时记录的两个顶点及可选的显式方块列表。
- * 玩家在其中放置方块后，通过 {@link StructureClaimProcessor} 对连通非空气方块做 flood-fill 认领。
+ * 世界生成路径已改为模板放置时写入 sentinel；本记录仍可供外部 API 登记，但不再用于盒内非空气 flood。
  */
 public record StructureBounds(
 		UUID id,

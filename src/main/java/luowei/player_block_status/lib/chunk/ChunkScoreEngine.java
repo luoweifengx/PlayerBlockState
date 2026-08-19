@@ -21,6 +21,9 @@ public final class ChunkScoreEngine {
 	) {
 		Map<UUID, Integer> blockScores = new HashMap<>();
 		for (UUID owner : placedBlocks.values()) {
+			if (TerritoryConfig.isStructureSentinel(owner)) {
+				continue;
+			}
 			UUID scoreKey = resolveScoreKey(owner, orgProvider);
 			blockScores.merge(scoreKey, TerritoryConfig.blockScorePerBlock, Integer::sum);
 		}

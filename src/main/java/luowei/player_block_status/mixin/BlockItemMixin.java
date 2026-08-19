@@ -12,6 +12,7 @@ import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 
+import luowei.player_block_status.PlayerBlockStatus;
 import luowei.player_block_status.lib.event.TerritoryEventHandler;
 
 @Mixin(BlockItem.class)
@@ -31,10 +32,14 @@ public abstract class BlockItemMixin {
 			return;
 		}
 
+		// getClickedPos() is already the placed cell (vanilla applies clicked-face offset).
 		BlockPos placedPos = context.getClickedPos();
-		if (!context.replacingClickedOnBlock()) {
-			placedPos = placedPos.relative(context.getClickedFace());
-		}
+		PlayerBlockStatus.LOGGER.info(
+				"[pbs place] pos={} replacing={} face={}",
+				placedPos,
+				context.replacingClickedOnBlock(),
+				context.getClickedFace()
+		);
 
 		TerritoryEventHandler.onBlockPlaced(player, placedPos);
 	}

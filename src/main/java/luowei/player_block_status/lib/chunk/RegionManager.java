@@ -9,9 +9,10 @@ import net.minecraft.world.level.ChunkPos;
 
 import luowei.player_block_status.lib.api.OrganizationProvider;
 import luowei.player_block_status.lib.api.SafeBiomeChecker;
+import luowei.player_block_status.lib.chunk.TerritoryDailyProcessor.ScheduleAttempt;
 
 /**
- * 维度领土管理器：事件只记账与标脏，重算仅在每日日出对标脏区块异步执行。
+ * 维度领土管理器：事件只记账与标脏，重算仅在每日日出对 dirty 区块异步执行。
  */
 public final class RegionManager {
 	private RegionManager() {
@@ -52,6 +53,20 @@ public final class RegionManager {
 	}
 
 	/**
+	 * 调试用：强制设置半径内区块状态与/或归属。详见 {@link WorldRegionData#forceSetChunks}。
+	 */
+	public static int forceSetChunks(
+			ServerLevel level,
+			ChunkPos center,
+			int radiusChunks,
+			ChunkState state,
+			boolean updateOwner,
+			UUID owner
+	) {
+		return WorldRegionData.get(level).forceSetChunks(center, radiusChunks, state, updateOwner, owner);
+	}
+
+	/**
 	 * 每日重算触发：{@code currentDay > lastDailyDay} 且 {@code timeOfDay >= dailyRefreshTime}。
 	 * 不再要求精确落在单个 tick，避免服务器 lag 跳过日出时刻。
 	 */
@@ -82,5 +97,15 @@ public final class RegionManager {
 		// );
 
 		TerritoryDailyProcessor.trySchedule(level, orgProvider, safeChecker, currentDay);
+	}
+
+	/** 调试用：立即调度一次标脏区块重算，可同一天重复执行。 */
+	public static ScheduleAttempt forceDailyRefresh(
+			ServerLevel level,
+			OrganizationProvider orgProvider,
+			SafeBiomeChecker safeChecker
+	) {
+		long currentDay = level.getDayTime() / 24000L;
+		return TerritoryDailyProcessor.tryScheduleForced(level, orgProvider, safeChecker, currentDay);
 	}
 }

@@ -1,7 +1,6 @@
 package luowei.player_block_status.lib.chunk;
 
 import java.util.ArrayList;
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -16,20 +15,23 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.UUIDUtil;
 
 /**
- * 单个区块的领土数据：玩家放置方块、分数、状态与脏页标记。
+ * 单个区块的领土数据：玩家放置方块、分数与状态。
+ * 脏页调度由维度级 {@code dirtyChunkKeys}+epoch 负责，本类不再维护 DirtyFlag。
  */
 public class ChunkTerritoryData {
 	public static final Codec<ChunkTerritoryData> CODEC = RecordCodecBuilder.create(instance -> instance.group(
 			TerritoryCodec.longKeyMap(UUIDUtil.CODEC).fieldOf("placed_blocks").forGetter(data -> data.placedBlocks),
 			TerritoryCodec.UUID_INT_MAP.fieldOf("score_modifiers").forGetter(data -> data.scoreModifiers),
 			TerritoryCodec.UUID_INT_MAP.optionalFieldOf("stay_scores", Map.of()).forGetter(data -> data.stayScores),
+			TerritoryCodec.UUID_INT_MAP.optionalFieldOf("cached_scores", Map.of()).forGetter(data -> data.cachedScores),
 			Codec.INT.fieldOf("state_id").forGetter(data -> data.state.getId()),
 			UUIDUtil.CODEC.optionalFieldOf("occupying_org").forGetter(data -> java.util.Optional.ofNullable(data.occupyingOrg))
-	).apply(instance, (placedBlocks, scoreModifiers, stayScores, stateId, occupyingOrg) -> {
+	).apply(instance, (placedBlocks, scoreModifiers, stayScores, cachedScores, stateId, occupyingOrg) -> {
 		ChunkTerritoryData data = new ChunkTerritoryData();
 		data.placedBlocks.putAll(placedBlocks);
 		data.scoreModifiers.putAll(scoreModifiers);
 		data.stayScores.putAll(stayScores);
+		data.cachedScores.putAll(cachedScores);
 		data.state = ChunkState.fromId(stateId);
 		data.occupyingOrg = occupyingOrg.orElse(null);
 		return data;
@@ -41,12 +43,11 @@ public class ChunkTerritoryData {
 	private final Map<UUID, Integer> scoreModifiers = new HashMap<>();
 	/** 当日累计停留分，每日重算结束后清零 */
 	private final Map<UUID, Integer> stayScores = new HashMap<>();
-	/** 运行时缓存的总分，脏页重算后更新 */
+	/** 上次日更写入的总分（方块 + 当时停留 + 修正），随 attachment 落盘 */
 	private final Map<UUID, Integer> cachedScores = new HashMap<>();
 
 	private ChunkState state = ChunkState.NATURAL;
 	private UUID occupyingOrg;
-	private final EnumSet<DirtyFlag> dirtyFlags = EnumSet.noneOf(DirtyFlag.class);
 
 	public static ChunkTerritoryData createEmpty() {
 		return new ChunkTerritoryData();
@@ -84,33 +85,12 @@ public class ChunkTerritoryData {
 		this.occupyingOrg = occupyingOrg;
 	}
 
-	public EnumSet<DirtyFlag> getDirtyFlags() {
-		return dirtyFlags;
-	}
-
-	public void markDirty(DirtyFlag flag) {
-		dirtyFlags.add(flag);
-	}
-
-	public boolean isDirty() {
-		return !dirtyFlags.isEmpty();
-	}
-
-	public void clearDirty() {
-		dirtyFlags.clear();
-	}
-
 	public void addPlacedBlock(BlockPos globalPos, UUID owner) {
 		placedBlocks.put(packLocalPos(globalPos), owner);
-		markDirty(DirtyFlag.BLOCK_SCORE);
-		markDirty(DirtyFlag.STATE);
 	}
 
 	public void removePlacedBlock(BlockPos globalPos) {
-		if (placedBlocks.remove(packLocalPos(globalPos)) != null) {
-			markDirty(DirtyFlag.BLOCK_SCORE);
-			markDirty(DirtyFlag.STATE);
-		}
+		placedBlocks.remove(packLocalPos(globalPos));
 	}
 
 	public UUID getPlacedBlockOwner(BlockPos globalPos) {
@@ -153,50 +133,41 @@ public class ChunkTerritoryData {
 
 	public void addDeathPenalty(UUID entityId, int delta) {
 		scoreModifiers.merge(entityId, delta, Integer::sum);
-		markDirty(DirtyFlag.DEATH_SCORE);
-		markDirty(DirtyFlag.STATE);
 	}
 
 	public void remapEntity(UUID from, UUID to) {
-		remapEntity(from, to, true);
+		remapEntityInternal(from, to);
 	}
 
-	/** 组织迁移等场景：只改 UUID，不标脏页。 */
+	/** 组织迁移等场景：只改 UUID。 */
 	public void remapEntitySilent(UUID from, UUID to) {
-		remapEntity(from, to, false);
+		remapEntityInternal(from, to);
 	}
 
-	private void remapEntity(UUID from, UUID to, boolean markDirtyFlags) {
-		boolean changed = false;
-
+	private void remapEntityInternal(UUID from, UUID to) {
 		for (Map.Entry<Long, UUID> entry : new ArrayList<>(placedBlocks.entrySet())) {
 			if (entry.getValue().equals(from)) {
 				entry.setValue(to);
-				changed = true;
 			}
 		}
 
 		Integer modifier = scoreModifiers.remove(from);
 		if (modifier != null) {
 			scoreModifiers.merge(to, modifier, Integer::sum);
-			changed = true;
 		}
 
 		Integer stay = stayScores.remove(from);
 		if (stay != null) {
 			stayScores.merge(to, stay, Integer::sum);
-			changed = true;
+		}
+
+		Integer cached = cachedScores.remove(from);
+		if (cached != null) {
+			cachedScores.merge(to, cached, Integer::sum);
 		}
 
 		if (from.equals(occupyingOrg)) {
 			occupyingOrg = to;
-			changed = true;
-		}
-
-		if (changed && markDirtyFlags) {
-			markDirty(DirtyFlag.ORGANIZATION);
-			markDirty(DirtyFlag.BLOCK_SCORE);
-			markDirty(DirtyFlag.STATE);
 		}
 	}
 

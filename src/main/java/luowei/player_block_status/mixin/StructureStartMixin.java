@@ -17,6 +17,19 @@ import luowei.player_block_status.lib.structure.StructureGenerationHooks;
 
 @Mixin(StructureStart.class)
 public abstract class StructureStartMixin {
+	@Inject(method = "placeInChunk", at = @At("HEAD"))
+	private void playerBlockStatus$beforeStructurePlacedInChunk(
+			WorldGenLevel level,
+			StructureManager structureManager,
+			ChunkGenerator generator,
+			RandomSource random,
+			BoundingBox chunkBox,
+			ChunkPos chunkPos,
+			CallbackInfo ci
+	) {
+		StructureGenerationHooks.beginStructurePlacement(level, (StructureStart) (Object) this, chunkPos);
+	}
+
 	@Inject(method = "placeInChunk", at = @At("RETURN"))
 	private void playerBlockStatus$afterStructurePlacedInChunk(
 			WorldGenLevel level,
@@ -27,6 +40,6 @@ public abstract class StructureStartMixin {
 			ChunkPos chunkPos,
 			CallbackInfo ci
 	) {
-		StructureGenerationHooks.onStructurePlacedInChunk(level, (StructureStart) (Object) this);
+		StructureGenerationHooks.onStructurePlacedInChunk(level, (StructureStart) (Object) this, chunkPos);
 	}
 }

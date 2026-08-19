@@ -2,7 +2,6 @@ package luowei.player_block_status.lib.chunk;
 
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -23,7 +22,6 @@ import luowei.player_block_status.lib.debug.MapExportTrace;
 public final class WorldRegionData {
 	private final ServerLevel level;
 	private final DimensionTerritoryData dimensionData;
-	private final Set<Long> dirtyChunkKeys = new HashSet<>();
 
 	private WorldRegionData(ServerLevel level, DimensionTerritoryData dimensionData) {
 		this.level = level;
@@ -100,18 +98,26 @@ public final class WorldRegionData {
 	}
 
 	public void markChunkDirty(long chunkKey) {
-		if (dirtyChunkKeys.add(chunkKey)) {
+		if (dimensionData.markChunkDirty(chunkKey)) {
 			PlayerBlockStatus.LOGGER.debug(
 					"[pbs daily] chunk {} marked dirty (dirtyCount={}, activeCount={})",
 					new ChunkPos(chunkKey),
-					dirtyChunkKeys.size(),
+					dimensionData.getDirtyChunkKeys().size(),
 					dimensionData.getActiveChunkKeys().size()
 			);
 		}
 	}
 
 	public Set<Long> getDirtyChunkKeys() {
-		return dirtyChunkKeys;
+		return dimensionData.getDirtyChunkKeys();
+	}
+
+	public Map<Long, Integer> snapshotDirtyEpochs(Set<Long> keys) {
+		return dimensionData.snapshotDirtyEpochs(keys);
+	}
+
+	public void clearRecomputedDirtyKeys(Map<Long, Integer> epochSnapshot) {
+		dimensionData.clearRecomputedDirtyKeys(epochSnapshot);
 	}
 
 	public int getActiveChunkKeyCount() {
@@ -123,15 +129,27 @@ public final class WorldRegionData {
 	}
 
 	/**
-	 * 解析本次每日重算应处理的区块：优先 dirty，否则回退到持久化的 activeChunkKeys。
-	 * dirty 集合仅存在于内存，重启后会丢失，因此必须回退。
+	 * 本次每日重算只处理已落盘的 dirty 集合；空则跳过，不再回退到全部 active。
 	 */
 	public Set<Long> resolveRecomputeChunkKeys() {
-		Set<Long> keys = new HashSet<>(dirtyChunkKeys);
+		return new HashSet<>(dimensionData.getDirtyChunkKeys());
+	}
+
+	public boolean acknowledgeIdleDaily(long currentDay) {
+		return dimensionData.acknowledgeIdleDaily(currentDay);
+	}
+
+	/**
+	 * 调试强制刷新：只重算当前 dirty；dirty 空则返回空（NOTHING_TO_RECOMPUTE）。
+	 */
+	public Set<Long> resolveForceRecomputeChunkKeys() {
+		Set<Long> keys = new HashSet<>(dimensionData.getDirtyChunkKeys());
 		if (!keys.isEmpty()) {
 			return keys;
 		}
-		keys.addAll(dimensionData.getActiveChunkKeys());
+		// 不明确是否删除，暂时以注释形式保留。
+		// dirty 空时不再回退到全部 active，避免强制 refresh 静默全量。
+		// keys.addAll(dimensionData.getActiveChunkKeys());
 		return keys;
 	}
 
@@ -155,8 +173,12 @@ public final class WorldRegionData {
 		return dimensionData.tryBeginDailyRefresh(currentDay);
 	}
 
-	public void finishDailyRefresh() {
-		dimensionData.finishDailyRefresh();
+	public boolean tryBeginDailyRefreshForce(long currentDay) {
+		return dimensionData.tryBeginDailyRefreshForce(currentDay);
+	}
+
+	public void finishDailyRefresh(long currentDay) {
+		dimensionData.finishDailyRefresh(currentDay);
 	}
 
 	public void cancelDailyRefreshInProgress() {
@@ -165,20 +187,20 @@ public final class WorldRegionData {
 
 	public void onBlockPlaced(ServerLevel level, BlockPos pos, UUID playerId, OrganizationProvider orgProvider) {
 		UUID scoreEntity = resolveScoreEntity(level, playerId, orgProvider);
-		claimStructureIfNeeded(level, pos, scoreEntity);
 
 		long chunkKey = new ChunkPos(pos).toLong();
 		ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
 		chunk.addPlacedBlock(pos, scoreEntity);
 		persistChunkChange(chunkKey, chunk);
 		markChunkDirty(chunkKey);
+		StructureClaimProcessor.enqueue(level, pos, scoreEntity);
 		PlayerBlockStatus.LOGGER.info(
 				"[pbs] block placed at {} in chunk {} by {} (placedCount={}, dirtyCount={})",
 				pos,
 				new ChunkPos(chunkKey),
 				scoreEntity,
 				chunk.getPlacedBlocks().size(),
-				dirtyChunkKeys.size()
+				dimensionData.getDirtyChunkKeys().size()
 		);
 	}
 
@@ -188,6 +210,21 @@ public final class WorldRegionData {
 			return null;
 		}
 		return chunk.getPlacedBlockOwner(pos);
+	}
+
+	/**
+	 * 结构模板方块：写入 sentinel 归属（不计分；不标脏，待玩家链式认领后再参与日更）。
+	 * 仅应在 Server 线程调用；世界生成 Worker 请经 {@link luowei.player_block_status.lib.structure.StructureSentinelWriteQueue} 入队。
+	 */
+	public void markStructureSentinel(BlockPos pos) {
+		UUID existing = getPlacedBlockOwner(pos);
+		if (existing != null && !TerritoryConfig.isStructureSentinel(existing)) {
+			return;
+		}
+		long chunkKey = new ChunkPos(pos).toLong();
+		ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
+		chunk.addPlacedBlock(pos, TerritoryConfig.STRUCTURE_BLOCK_SENTINEL);
+		persistChunkChange(chunkKey, chunk);
 	}
 
 	public void claimStructureBlock(BlockPos pos, UUID owner) {
@@ -254,6 +291,67 @@ public final class WorldRegionData {
 		return Optional.ofNullable(chunk);
 	}
 
+	/**
+	 * 调试用：在切比雪夫半径内强制写入区块状态与/或归属（组织/玩家 UUID）。
+	 * {@code state == null} 表示不改状态；{@code updateOwner == false} 表示不改归属；
+	 * {@code updateOwner == true} 时将 {@code occupyingOrg} 设为 {@code owner}（可为 null 清空）。
+	 * 写入后标脏（维度 dirtyChunkKeys+epoch），并增量更新占领索引。
+	 *
+	 * @return 实际被改写的区块数量
+	 */
+	public int forceSetChunks(ChunkPos center, int radiusChunks, ChunkState state, boolean updateOwner, UUID owner) {
+		if (radiusChunks < 0) {
+			throw new IllegalArgumentException("radiusChunks must be >= 0");
+		}
+		if (state == null && !updateOwner) {
+			return 0;
+		}
+
+		int changed = 0;
+		Set<Long> changedKeys = new HashSet<>();
+		for (int dx = -radiusChunks; dx <= radiusChunks; dx++) {
+			for (int dz = -radiusChunks; dz <= radiusChunks; dz++) {
+				if (Math.max(Math.abs(dx), Math.abs(dz)) > radiusChunks) {
+					continue;
+				}
+				ChunkPos pos = new ChunkPos(center.x + dx, center.z + dz);
+				long chunkKey = pos.toLong();
+				ChunkTerritoryData existing = ChunkTerritoryAccess.getIfPresent(level, pos);
+				ChunkState currentState = existing == null ? ChunkState.NATURAL : existing.getState();
+				UUID currentOwner = existing == null ? null : existing.getOccupyingOrg();
+
+				boolean changeState = state != null && state != currentState;
+				boolean changeOwner = updateOwner && (owner == null ? currentOwner != null : !owner.equals(currentOwner));
+				if (!changeState && !changeOwner) {
+					continue;
+				}
+
+				ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
+				if (changeState) {
+					chunk.setState(state);
+				}
+				if (changeOwner) {
+					chunk.setOccupyingOrg(owner);
+				}
+				persistChunkChange(chunkKey, chunk);
+				markChunkDirty(chunkKey);
+				changedKeys.add(chunkKey);
+				changed++;
+			}
+		}
+
+		EntityChunkIndex index = getEntityChunkIndex();
+		for (long chunkKey : changedKeys) {
+			ChunkTerritoryData chunk = getChunk(chunkKey);
+			if (chunk == null) {
+				index.replaceChunk(chunkKey, ChunkState.NATURAL, null);
+			} else {
+				index.replaceChunk(chunkKey, chunk.getState(), chunk.getOccupyingOrg());
+			}
+		}
+		return changed;
+	}
+
 	void removeEmptyChunk(long chunkKey) {
 		ChunkPos chunkPos = new ChunkPos(chunkKey);
 		ChunkTerritoryData chunk = getChunk(chunkKey);
@@ -285,21 +383,7 @@ public final class WorldRegionData {
 		}
 	}
 
-	private void claimStructureIfNeeded(ServerLevel level, BlockPos placedPos, UUID scoreEntity) {
-		Iterator<StructureBounds> iterator = dimensionData.getPendingStructures().iterator();
-		while (iterator.hasNext()) {
-			StructureBounds bounds = iterator.next();
-			if (!bounds.contains(placedPos)) {
-				continue;
-			}
-
-			StructureClaimProcessor.enqueue(level, this, bounds, placedPos, scoreEntity);
-			iterator.remove();
-			dimensionData.setDirty();
-		}
-	}
-
-	private void persistChunkChange(long chunkKey, ChunkTerritoryData chunk) {
+	void persistChunkChange(long chunkKey, ChunkTerritoryData chunk) {
 		ChunkPos chunkPos = new ChunkPos(chunkKey);
 		if (chunk.hasTerritoryData()) {
 			trackActiveChunk(chunkKey);
@@ -321,6 +405,7 @@ public final class WorldRegionData {
 		if (dimensionData.getActiveChunkKeys().remove(chunkKey)) {
 			dimensionData.setDirty();
 		}
+		getEntityChunkIndex().replaceChunk(chunkKey, ChunkState.NATURAL, null);
 	}
 
 	private UUID resolveScoreEntity(ServerLevel level, UUID playerId, OrganizationProvider orgProvider) {

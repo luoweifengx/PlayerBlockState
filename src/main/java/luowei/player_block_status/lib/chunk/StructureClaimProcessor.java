@@ -12,12 +12,12 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.state.BlockState;
 
 import luowei.player_block_status.PlayerBlockStatus;
 
 /**
- * 结构认领：从玩家放置点出发，在包围盒内对连通非空气方块做 BFS，分 tick 写入归属。
+ * 结构链式认领：玩家放置后，对六邻中 {@link TerritoryConfig#STRUCTURE_BLOCK_SENTINEL} 方块做分 tick BFS，
+ * 改写为同一归属 UUID；空气/无记录/已有主人则停止传播。
  */
 public final class StructureClaimProcessor {
 	private static final BlockPos[] NEIGHBOR_OFFSETS = {
@@ -34,6 +34,26 @@ public final class StructureClaimProcessor {
 	private StructureClaimProcessor() {
 	}
 
+	/**
+	 * 从玩家刚放置的方块出发，对其六邻启动 sentinel 链式传播。
+	 */
+	public static void enqueue(ServerLevel level, BlockPos seed, UUID owner) {
+		if (owner == null || TerritoryConfig.isStructureSentinel(owner)) {
+			return;
+		}
+
+		ClaimJob job = new ClaimJob(owner, seed);
+		JOBS_BY_DIMENSION.computeIfAbsent(level.dimension(), key -> new ArrayDeque<>()).addLast(job);
+		PlayerBlockStatus.LOGGER.info(
+				"[pbs claim] started owner={} seed={} neighbors={}",
+				owner,
+				seed,
+				job.queue
+		);
+	}
+
+	/** @deprecated 使用 {@link #enqueue(ServerLevel, BlockPos, UUID)}；bounds 已不再参与传播条件。 */
+	@Deprecated
 	public static void enqueue(
 			ServerLevel level,
 			WorldRegionData data,
@@ -41,14 +61,7 @@ public final class StructureClaimProcessor {
 			BlockPos seed,
 			UUID owner
 	) {
-		ClaimJob job = ClaimJob.from(bounds, seed, owner);
-		JOBS_BY_DIMENSION.computeIfAbsent(level.dimension(), key -> new ArrayDeque<>()).addLast(job);
-		PlayerBlockStatus.LOGGER.info(
-				"Structure {} claim flood-fill started by {} from {}",
-				bounds.id(),
-				owner,
-				seed
-		);
+		enqueue(level, seed, owner);
 	}
 
 	public static void tick(ServerLevel level) {
@@ -70,12 +83,17 @@ public final class StructureClaimProcessor {
 			BlockPos pos = job.queue.pollFirst();
 			if (pos == null) {
 				jobs.pollFirst();
-				PlayerBlockStatus.LOGGER.info("Structure {} flood-fill completed ({} blocks)", job.structureId, job.claimedCount);
+				PlayerBlockStatus.LOGGER.info(
+						"[pbs claim] completed owner={} claimed={} seed={}",
+						job.owner,
+						job.claimedCount,
+						job.seed
+				);
 				continue;
 			}
 
 			budget--;
-			if (!job.claimBlock(level, data, pos)) {
+			if (!job.claimSentinel(data, pos)) {
 				continue;
 			}
 
@@ -89,66 +107,55 @@ public final class StructureClaimProcessor {
 	}
 
 	private static final class ClaimJob {
-		private final UUID structureId;
 		private final UUID owner;
-		private final IntBounds bounds;
+		private final BlockPos seed;
 		private final Set<Long> visited = new HashSet<>();
 		private final Deque<BlockPos> queue = new ArrayDeque<>();
 		private int claimedCount;
+		private boolean seedLogged;
 
-		private ClaimJob(UUID structureId, UUID owner, IntBounds bounds, BlockPos seed) {
-			this.structureId = structureId;
+		private ClaimJob(UUID owner, BlockPos seed) {
 			this.owner = owner;
-			this.bounds = bounds;
-			visited.add(seed.asLong());
+			this.seed = seed.immutable();
+			visited.add(this.seed.asLong());
 			for (BlockPos offset : NEIGHBOR_OFFSETS) {
-				BlockPos neighbor = seed.offset(offset);
+				BlockPos neighbor = this.seed.offset(offset);
 				if (visited.add(neighbor.asLong())) {
 					queue.addLast(neighbor);
 				}
 			}
 		}
 
-		private static ClaimJob from(StructureBounds bounds, BlockPos seed, UUID owner) {
-			return new ClaimJob(bounds.id(), owner, IntBounds.from(bounds), seed);
-		}
-
-		private boolean claimBlock(ServerLevel level, WorldRegionData data, BlockPos pos) {
-			if (!bounds.contains(pos)) {
-				return false;
+		private boolean claimSentinel(WorldRegionData data, BlockPos pos) {
+			if (!seedLogged) {
+				UUID seedOwner = data.getPlacedBlockOwner(seed);
+				PlayerBlockStatus.LOGGER.info(
+						"[pbs claim] seed-owner seed={} owner={} sentinel={}",
+						seed,
+						seedOwner,
+						TerritoryConfig.isStructureSentinel(seedOwner)
+				);
+				seedLogged = true;
 			}
 
-			BlockState state = level.getBlockState(pos);
-			if (state.isAir()) {
-				return false;
+			UUID current = data.getPlacedBlockOwner(pos);
+			boolean sentinel = TerritoryConfig.isStructureSentinel(current);
+			if (claimedCount == 0) {
+				PlayerBlockStatus.LOGGER.info(
+						"[pbs claim] probe pos={} owner={} sentinel={}",
+						pos,
+						current,
+						sentinel
+				);
 			}
-
-			if (data.getPlacedBlockOwner(pos) != null) {
+			if (!sentinel) {
 				return false;
 			}
 
 			data.claimStructureBlock(pos, owner);
 			claimedCount++;
+			PlayerBlockStatus.LOGGER.info("[pbs claim] claimed pos={} count={}", pos, claimedCount);
 			return true;
-		}
-	}
-
-	private record IntBounds(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
-		private static IntBounds from(StructureBounds bounds) {
-			return new IntBounds(
-					Math.min(bounds.cornerA().getX(), bounds.cornerB().getX()),
-					Math.min(bounds.cornerA().getY(), bounds.cornerB().getY()),
-					Math.min(bounds.cornerA().getZ(), bounds.cornerB().getZ()),
-					Math.max(bounds.cornerA().getX(), bounds.cornerB().getX()),
-					Math.max(bounds.cornerA().getY(), bounds.cornerB().getY()),
-					Math.max(bounds.cornerA().getZ(), bounds.cornerB().getZ())
-			);
-		}
-
-		private boolean contains(BlockPos pos) {
-			return pos.getX() >= minX && pos.getX() <= maxX
-					&& pos.getY() >= minY && pos.getY() <= maxY
-					&& pos.getZ() >= minZ && pos.getZ() <= maxZ;
 		}
 	}
 }

@@ -20,6 +20,13 @@ public final class ChunkStateMachine {
 	private ChunkStateMachine() {
 	}
 
+	/** 未参与本次重算的邻区真实状态 + 归属，供边界/敌对边界判定。 */
+	public record NeighborChunkView(ChunkState state, UUID occupyingOrg) {
+		public static NeighborChunkView natural() {
+			return new NeighborChunkView(ChunkState.NATURAL, null);
+		}
+	}
+
 	public static TerritoryDailyProcessor.BaseStateResult computeBaseStateFromSnapshot(
 			TerritoryDailyProcessor.DailyChunkSnapshot snapshot
 	) {
@@ -33,39 +40,46 @@ public final class ChunkStateMachine {
 	}
 
 	public static Map<Long, ChunkState> deriveBorderStatesFromBaseStates(Map<Long, ChunkState> baseStates) {
-		return deriveBorderStatesFromBaseStates(baseStates, Map.of());
+		return deriveBorderStatesFromBaseStates(baseStates, Map.of(), Map.of());
 	}
 
 	/**
-	 * @param contextStates 未参与本次重算的邻区状态，仅用于判断占领区是否为边缘
+	 * @param occupyingOrgs 与 {@code baseStates} 对应的占领归属（OCCUPIED→BORDER 时保留）
+	 * @param contextChunks 未参与本次重算的邻区真实状态/归属；须覆盖敌对边界延伸范围
 	 */
 	public static Map<Long, ChunkState> deriveBorderStatesFromBaseStates(
 			Map<Long, ChunkState> baseStates,
-			Map<Long, ChunkState> contextStates
+			Map<Long, UUID> occupyingOrgs,
+			Map<Long, NeighborChunkView> contextChunks
 	) {
 		Map<Long, ChunkState> finalStates = new HashMap<>(baseStates);
 		List<Long> borderKeys = new ArrayList<>();
 
 		// ① 先完成全部占领区 → 边界，同时收集边界键
 		for (Map.Entry<Long, ChunkState> entry : baseStates.entrySet()) {
-			if (entry.getValue() == ChunkState.OCCUPIED && isOccupiedEdge(baseStates, contextStates, entry.getKey())) {
-				long key = entry.getKey();
+			long key = entry.getKey();
+			if (entry.getValue() == ChunkState.OCCUPIED
+					&& isOccupiedEdge(baseStates, occupyingOrgs, contextChunks, key, occupyingOrgs.get(key))) {
 				finalStates.put(key, ChunkState.BORDER);
 				borderKeys.add(key);
 			}
 		}
 
 		// ② 仅遍历边界区块，向外延伸若干格自然区标为敌对边界
-		deriveHostileBordersFromBorderChunks(finalStates, borderKeys);
+		deriveHostileBordersFromBorderChunks(finalStates, contextChunks, borderKeys);
 
 		return finalStates;
 	}
 
 	/**
 	 * 以每个 BORDER 为中心，向外延伸 {@link TerritoryConfig#hostileBorderExtensionChunks} 格（切比雪夫距离）内的自然/无记录区块 → HOSTILE_BORDER。
-	 * 准确收缩时可维护 BORDER 区块索引，仅对索引项局部重算敌对边界，避免全图遍历。
+	 * 仅当邻区真实为 NATURAL 或无领土时标记；禁止覆盖 OCCUPIED/BORDER（含他方）。
 	 */
-	private static void deriveHostileBordersFromBorderChunks(Map<Long, ChunkState> states, List<Long> borderKeys) {
+	private static void deriveHostileBordersFromBorderChunks(
+			Map<Long, ChunkState> states,
+			Map<Long, NeighborChunkView> contextChunks,
+			List<Long> borderKeys
+	) {
 		int extension = TerritoryConfig.hostileBorderExtensionChunks;
 		for (long borderKey : borderKeys) {
 			ChunkPos borderPos = new ChunkPos(borderKey);
@@ -78,7 +92,7 @@ public final class ChunkStateMachine {
 						continue;
 					}
 					long neighborKey = ChunkPos.asLong(borderPos.x + dx, borderPos.z + dz);
-					ChunkState neighborState = states.get(neighborKey);
+					ChunkState neighborState = resolveState(neighborKey, states, contextChunks);
 					if (neighborState == null || neighborState == ChunkState.NATURAL) {
 						states.put(neighborKey, ChunkState.HOSTILE_BORDER);
 					}
@@ -160,42 +174,162 @@ public final class ChunkStateMachine {
 
 	public static void deriveBorderStates(Map<Long, ChunkTerritoryData> chunks, Set<Long> affectedKeys) {
 		Map<Long, ChunkState> baseStates = new HashMap<>();
+		Map<Long, UUID> occupyingOrgs = new HashMap<>();
+		Map<Long, NeighborChunkView> context = new HashMap<>();
+
 		for (long key : affectedKeys) {
 			ChunkTerritoryData chunk = chunks.get(key);
 			if (chunk != null) {
 				baseStates.put(key, chunk.getState());
+				occupyingOrgs.put(key, chunk.getOccupyingOrg());
 			}
 		}
 
-		Map<Long, ChunkState> finalStates = deriveBorderStatesFromBaseStates(baseStates);
+		int extension = TerritoryConfig.hostileBorderExtensionChunks;
+		for (long key : affectedKeys) {
+			ChunkPos pos = new ChunkPos(key);
+			for (int dx = -extension; dx <= extension; dx++) {
+				for (int dz = -extension; dz <= extension; dz++) {
+					long neighborKey = ChunkPos.asLong(pos.x + dx, pos.z + dz);
+					if (baseStates.containsKey(neighborKey) || context.containsKey(neighborKey)) {
+						continue;
+					}
+					ChunkTerritoryData chunk = chunks.get(neighborKey);
+					context.put(
+							neighborKey,
+							chunk == null
+									? NeighborChunkView.natural()
+									: new NeighborChunkView(chunk.getState(), chunk.getOccupyingOrg())
+					);
+				}
+			}
+		}
+
+		Map<Long, ChunkState> finalStates = deriveBorderStatesFromBaseStates(baseStates, occupyingOrgs, context);
 		for (Map.Entry<Long, ChunkState> entry : finalStates.entrySet()) {
 			ChunkTerritoryData chunk = chunks.get(entry.getKey());
-			if (chunk != null) {
-				chunk.setState(entry.getValue());
+			if (chunk == null) {
+				continue;
+			}
+			ChunkState next = entry.getValue();
+			if (next == ChunkState.HOSTILE_BORDER
+					&& (chunk.getState() == ChunkState.OCCUPIED || chunk.getState() == ChunkState.BORDER)) {
+				continue;
+			}
+			chunk.setState(next);
+			// BORDER 保留基础态写入的 occupyingOrg；HOSTILE 无归属
+			if (next == ChunkState.HOSTILE_BORDER) {
+				chunk.setOccupyingOrg(null);
 			}
 		}
 	}
 
-	private static boolean isOccupiedEdge(
-			Map<Long, ChunkState> states,
-			Map<Long, ChunkState> contextStates,
-			long chunkKey
+	/**
+	 * 占领族边缘：四邻存在无数据/非己方占领族，或邻区为 OCCUPIED/BORDER 但归属不是自己。
+	 */
+	static boolean isOccupiedEdge(
+			Map<Long, ChunkState> baseStates,
+			Map<Long, UUID> occupyingOrgs,
+			Map<Long, NeighborChunkView> contextChunks,
+			long chunkKey,
+			UUID selfOrg
 	) {
 		ChunkPos pos = new ChunkPos(chunkKey);
-		for (ChunkPos neighbor : getNeighbors(pos)) {
+		for (ChunkPos neighbor : getCardinalNeighbors(pos)) {
 			long neighborKey = neighbor.toLong();
-			ChunkState neighborState = states.get(neighborKey);
-			if (neighborState == null) {
-				neighborState = contextStates.get(neighborKey);
-			}
-			if (neighborState == null || neighborState != ChunkState.OCCUPIED) {
+			NeighborChunkView neighborView = resolveNeighbor(neighborKey, baseStates, occupyingOrgs, contextChunks);
+			if (!isOwnOccupiedFamily(neighborView, selfOrg)) {
 				return true;
 			}
 		}
 		return false;
 	}
 
-	private static ChunkPos[] getNeighbors(ChunkPos pos) {
+	/** 四邻均为同一 occupyingOrg 的 OCCUPIED/BORDER（邻区无数据则不算）。 */
+	public static boolean allCardinalNeighborsOwnOccupiedFamily(
+			NeighborResolver resolver,
+			long chunkKey,
+			UUID selfOrg
+	) {
+		if (selfOrg == null) {
+			return false;
+		}
+		ChunkPos pos = new ChunkPos(chunkKey);
+		for (ChunkPos neighbor : getCardinalNeighbors(pos)) {
+			NeighborChunkView view = resolver.resolve(neighbor.toLong());
+			if (!isOwnOccupiedFamily(view, selfOrg)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	/** 切比雪夫距离 ≤ {@code extension} 内是否存在 BORDER。 */
+	public static boolean hasBorderWithinChebyshev(
+			NeighborResolver resolver,
+			long chunkKey,
+			int extension
+	) {
+		ChunkPos pos = new ChunkPos(chunkKey);
+		for (int dx = -extension; dx <= extension; dx++) {
+			for (int dz = -extension; dz <= extension; dz++) {
+				if (dx == 0 && dz == 0) {
+					continue;
+				}
+				if (Math.max(Math.abs(dx), Math.abs(dz)) > extension) {
+					continue;
+				}
+				NeighborChunkView view = resolver.resolve(ChunkPos.asLong(pos.x + dx, pos.z + dz));
+				if (view != null && view.state() == ChunkState.BORDER) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	@FunctionalInterface
+	public interface NeighborResolver {
+		/** @return 邻区视图；无 attachment 时返回 {@code null}（不算占领族） */
+		NeighborChunkView resolve(long chunkKey);
+	}
+
+	static boolean isOwnOccupiedFamily(NeighborChunkView neighbor, UUID selfOrg) {
+		if (neighbor == null || selfOrg == null) {
+			return false;
+		}
+		ChunkState state = neighbor.state();
+		if (state != ChunkState.OCCUPIED && state != ChunkState.BORDER) {
+			return false;
+		}
+		return selfOrg.equals(neighbor.occupyingOrg());
+	}
+
+	private static NeighborChunkView resolveNeighbor(
+			long neighborKey,
+			Map<Long, ChunkState> baseStates,
+			Map<Long, UUID> occupyingOrgs,
+			Map<Long, NeighborChunkView> contextChunks
+	) {
+		if (baseStates.containsKey(neighborKey)) {
+			return new NeighborChunkView(baseStates.get(neighborKey), occupyingOrgs.get(neighborKey));
+		}
+		return contextChunks.get(neighborKey);
+	}
+
+	private static ChunkState resolveState(
+			long chunkKey,
+			Map<Long, ChunkState> workingStates,
+			Map<Long, NeighborChunkView> contextChunks
+	) {
+		if (workingStates.containsKey(chunkKey)) {
+			return workingStates.get(chunkKey);
+		}
+		NeighborChunkView view = contextChunks.get(chunkKey);
+		return view == null ? null : view.state();
+	}
+
+	private static ChunkPos[] getCardinalNeighbors(ChunkPos pos) {
 		return new ChunkPos[] {
 				new ChunkPos(pos.x - 1, pos.z),
 				new ChunkPos(pos.x + 1, pos.z),
