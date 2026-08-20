@@ -145,7 +145,7 @@ public class DimensionTerritoryData extends SavedData {
 
 	public boolean tryBeginDailyRefresh(long currentDay) {
 		if (dailyRefreshInProgress) {
-			PlayerBlockStatus.LOGGER.info(
+			PlayerBlockStatus.LOGGER.debug(
 					"[pbs daily] tryBeginDailyRefresh rejected: refresh already in progress (currentDay={}, lastDailyDay={})",
 					currentDay,
 					lastDailyDay
@@ -166,7 +166,7 @@ public class DimensionTerritoryData extends SavedData {
 	/** 调试用：允许同一天重复重算，仍拒绝并发刷新。 */
 	public boolean tryBeginDailyRefreshForce(long currentDay) {
 		if (dailyRefreshInProgress) {
-			PlayerBlockStatus.LOGGER.info(
+			PlayerBlockStatus.LOGGER.debug(
 					"[pbs daily] tryBeginDailyRefreshForce rejected: refresh already in progress (currentDay={}, lastDailyDay={})",
 					currentDay,
 					lastDailyDay
@@ -190,7 +190,7 @@ public class DimensionTerritoryData extends SavedData {
 
 	private boolean beginDailyRefresh(long currentDay) {
 		dailyRefreshInProgress = true;
-		PlayerBlockStatus.LOGGER.info(
+		PlayerBlockStatus.LOGGER.debug(
 				"[pbs daily] daily refresh begun: currentDay={}, lastDailyDay={}",
 				currentDay,
 				lastDailyDay

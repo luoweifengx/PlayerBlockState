@@ -6,8 +6,11 @@ import java.util.UUID;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
- * 由消费模组提供：查询玩家所属组织。
- * 玩家加入组织后，所有加减分均计入组织。
+ * 计分账户钩子：放置、停留、死亡写入时，把玩家映射到要入账的 UUID。
+ * <p>
+ * 返回 empty 则记到玩家自己的 UUID。这不是完整的组织系统：不负责创建/加入/踢人、
+ * 显示名、进界文案，也不会在成员变动时迁移已有领地。那些要由本库内置组织，
+ * 或由外部模组自己做完后再调用 {@code transferPlayerToOrg} / {@code remapOrganization}。
  */
 @FunctionalInterface
 public interface OrganizationProvider {

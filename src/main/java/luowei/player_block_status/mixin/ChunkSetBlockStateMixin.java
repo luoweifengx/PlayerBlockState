@@ -22,6 +22,7 @@ import luowei.player_block_status.lib.structure.StructureGenerationHooks;
  * （含 ImposterProtoChunk 委托写入）上。
  * <p>
  * 仅入队坐标，禁止 getChunk / attachment。与 {@link WorldGenRegionMixin} 重复坐标由 HashSet 去重。
+ * 运行中世界的删分见 {@link LevelChunkSetBlockStateMixin}，不在 ProtoChunk 上查领土数据。
  */
 @Mixin({ProtoChunk.class, LevelChunk.class})
 public abstract class ChunkSetBlockStateMixin {

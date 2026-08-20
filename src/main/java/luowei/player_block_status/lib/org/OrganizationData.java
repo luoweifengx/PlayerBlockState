@@ -24,8 +24,10 @@ public class OrganizationData extends SavedData {
 			Codec.unboundedMap(Codec.STRING, OrganizationRecord.CODEC).fieldOf("organizations").forGetter(data -> data.toStringOrgMap()),
 			Codec.unboundedMap(Codec.STRING, Codec.STRING).fieldOf("player_orgs").forGetter(data -> data.toStringPlayerMap()),
 			UUIDUtil.CODEC.listOf().optionalFieldOf("entity_poll_order", List.of()).forGetter(data -> data.pollList.toPersist()),
-			Codec.unboundedMap(Codec.STRING, Codec.STRING).optionalFieldOf("player_names", Map.of()).forGetter(data -> data.toStringPlayerNameMap())
-	).apply(instance, (organizations, playerOrgs, pollOrder, playerNames) -> {
+			Codec.unboundedMap(Codec.STRING, Codec.STRING).optionalFieldOf("player_names", Map.of()).forGetter(data -> data.toStringPlayerNameMap()),
+			Codec.unboundedMap(Codec.STRING, Codec.STRING).optionalFieldOf("player_territory_names", Map.of())
+					.forGetter(data -> data.toStringPlayerTerritoryNameMap())
+	).apply(instance, (organizations, playerOrgs, pollOrder, playerNames, playerTerritoryNames) -> {
 		OrganizationData data = new OrganizationData();
 		organizations.forEach((key, record) -> data.organizations.put(UUID.fromString(key), record));
 		playerOrgs.forEach((playerKey, orgKey) -> data.playerToOrg.put(UUID.fromString(playerKey), UUID.fromString(orgKey)));
@@ -33,6 +35,14 @@ public class OrganizationData extends SavedData {
 		playerNames.forEach((playerKey, name) -> {
 			try {
 				data.playerNames.put(UUID.fromString(playerKey), name);
+			} catch (IllegalArgumentException ignored) {
+			}
+		});
+		playerTerritoryNames.forEach((playerKey, name) -> {
+			try {
+				if (name != null && !name.isBlank()) {
+					data.playerTerritoryNames.put(UUID.fromString(playerKey), name);
+				}
 			} catch (IllegalArgumentException ignored) {
 			}
 		});
@@ -49,6 +59,8 @@ public class OrganizationData extends SavedData {
 	private final Map<UUID, OrganizationRecord> organizations = new HashMap<>();
 	private final Map<UUID, UUID> playerToOrg = new HashMap<>();
 	private final Map<UUID, String> playerNames = new HashMap<>();
+	/** 玩家个人地区/领地显示名；与 {@link #playerNames} 并列，加入组织后仍保留。 */
+	private final Map<UUID, String> playerTerritoryNames = new HashMap<>();
 	private final EntityPollList pollList = new EntityPollList(this::setDirty);
 
 	public static OrganizationData get(MinecraftServer server) {
@@ -84,6 +96,37 @@ public class OrganizationData extends SavedData {
 			return;
 		}
 		playerNames.put(playerId, name);
+		setDirty();
+	}
+
+	public Optional<String> getPlayerTerritoryName(UUID playerId) {
+		return Optional.ofNullable(playerTerritoryNames.get(playerId)).filter(name -> name != null && !name.isBlank());
+	}
+
+	/**
+	 * 写入玩家个人地区/领地显示名并立即标脏。不改 {@link #playerNames}。
+	 * 加入组织后此字段仍存在；进领地提示读的是区块 occupyingOrg（可能是组织 UUID）。
+	 */
+	public void setPlayerTerritoryName(UUID playerId, String territoryName) {
+		if (playerId == null || territoryName == null || territoryName.isBlank()) {
+			throw new IllegalArgumentException("Player territory/region name cannot be empty");
+		}
+		playerTerritoryNames.put(playerId, territoryName);
+		setDirty();
+	}
+
+	/**
+	 * 写入组织地区/领地显示名并立即标脏。不改 {@link OrganizationRecord#name()}。
+	 */
+	public void setOrganizationTerritoryName(UUID orgId, String territoryName) {
+		OrganizationRecord record = organizations.get(orgId);
+		if (record == null) {
+			throw new IllegalArgumentException("Organization not found: " + orgId);
+		}
+		if (territoryName == null || territoryName.isBlank()) {
+			throw new IllegalArgumentException("Organization territory/region name cannot be empty");
+		}
+		record.setTerritoryName(territoryName);
 		setDirty();
 	}
 
@@ -165,6 +208,16 @@ public class OrganizationData extends SavedData {
 	private Map<String, String> toStringPlayerNameMap() {
 		Map<String, String> result = new HashMap<>();
 		playerNames.forEach((playerId, name) -> {
+			if (name != null && !name.isBlank()) {
+				result.put(playerId.toString(), name);
+			}
+		});
+		return result;
+	}
+
+	private Map<String, String> toStringPlayerTerritoryNameMap() {
+		Map<String, String> result = new HashMap<>();
+		playerTerritoryNames.forEach((playerId, name) -> {
 			if (name != null && !name.isBlank()) {
 				result.put(playerId.toString(), name);
 			}

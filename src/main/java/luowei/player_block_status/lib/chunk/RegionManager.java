@@ -23,9 +23,19 @@ public final class RegionManager {
 		data.onBlockPlaced(level, pos, player.getUUID(), orgProvider);
 	}
 
+	/**
+	 * 删分唯一出口：从 {@code placed_blocks} 去掉该格（幂等）。
+	 * Mixin 与 {@link luowei.player_block_status.lib.api.PlayerBlockStatusLib#notifyTrackedBlockRemoved}
+	 * 均汇入此处。仅服务端逻辑线程生效。
+	 */
 	public static void onBlockRemoved(ServerLevel level, BlockPos pos) {
-		WorldRegionData data = WorldRegionData.get(level);
-		data.onBlockRemoved(pos);
+		if (level == null || pos == null) {
+			return;
+		}
+		if (!level.getServer().isSameThread()) {
+			return;
+		}
+		WorldRegionData.get(level).onBlockRemoved(pos);
 	}
 
 	public static void onPlayerStay(ServerLevel level, ServerPlayer player, ChunkPos chunkPos, OrganizationProvider orgProvider) {

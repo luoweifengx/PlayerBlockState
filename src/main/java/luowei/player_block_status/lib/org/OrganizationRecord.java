@@ -10,26 +10,35 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.UUIDUtil;
 
 /**
- * 组织元数据：标识、名称、创建者与成员列表。
+ * 组织元数据：标识、组织显示名、创建者、成员列表，以及地区/领地显示名。
+ * {@link #name()} 是组织自身名称；{@link #territoryName()} 是所属地区名称，二者独立。
  */
 public final class OrganizationRecord {
 	public static final Codec<OrganizationRecord> CODEC = RecordCodecBuilder.create(instance -> instance.group(
 			UUIDUtil.CODEC.fieldOf("id").forGetter(OrganizationRecord::id),
 			Codec.STRING.optionalFieldOf("name", "").forGetter(record -> record.name == null ? "" : record.name),
 			UUIDUtil.CODEC.fieldOf("owner").forGetter(OrganizationRecord::owner),
-			UUIDUtil.CODEC.listOf().fieldOf("members").forGetter(record -> record.members.stream().toList())
-	).apply(instance, (id, name, owner, members) -> new OrganizationRecord(id, name, owner, new HashSet<>(members))));
+			UUIDUtil.CODEC.listOf().fieldOf("members").forGetter(record -> record.members.stream().toList()),
+			Codec.STRING.optionalFieldOf("territory_name", "").forGetter(record -> record.territoryName == null ? "" : record.territoryName)
+	).apply(instance, (id, name, owner, members, territoryName) ->
+			new OrganizationRecord(id, name, owner, new HashSet<>(members), territoryName)));
 
 	private final UUID id;
 	private String name;
 	private UUID owner;
 	private final Set<UUID> members;
+	private String territoryName;
 
 	public OrganizationRecord(UUID id, String name, UUID owner, Set<UUID> members) {
+		this(id, name, owner, members, "");
+	}
+
+	public OrganizationRecord(UUID id, String name, UUID owner, Set<UUID> members, String territoryName) {
 		this.id = id;
 		this.name = name;
 		this.owner = owner;
 		this.members = members;
+		this.territoryName = territoryName == null ? "" : territoryName;
 	}
 
 	public UUID id() {
@@ -42,6 +51,17 @@ public final class OrganizationRecord {
 
 	public void setName(String name) {
 		this.name = name;
+	}
+
+	/**
+	 * 组织所属地区/领地的自定义显示名；未改过时为空，解析时回退为「{组织名}的领地」。
+	 */
+	public String territoryName() {
+		return territoryName == null ? "" : territoryName;
+	}
+
+	public void setTerritoryName(String territoryName) {
+		this.territoryName = territoryName == null ? "" : territoryName;
 	}
 
 	public UUID owner() {

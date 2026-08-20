@@ -34,7 +34,7 @@ public abstract class BlockItemMixin {
 
 		// getClickedPos() is already the placed cell (vanilla applies clicked-face offset).
 		BlockPos placedPos = context.getClickedPos();
-		PlayerBlockStatus.LOGGER.info(
+		PlayerBlockStatus.LOGGER.debug(
 				"[pbs place] pos={} replacing={} face={}",
 				placedPos,
 				context.replacingClickedOnBlock(),

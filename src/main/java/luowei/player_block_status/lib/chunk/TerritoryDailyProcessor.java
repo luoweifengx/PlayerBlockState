@@ -47,7 +47,7 @@ public final class TerritoryDailyProcessor {
 
 		if (recomputeKeys.isEmpty()) {
 			if (data.acknowledgeIdleDaily(currentDay)) {
-				PlayerBlockStatus.LOGGER.info(
+				PlayerBlockStatus.LOGGER.debug(
 						"[pbs daily] no dirty chunks for {} on day {}, skipping recompute",
 						level.dimension().location(),
 						currentDay
@@ -57,7 +57,7 @@ public final class TerritoryDailyProcessor {
 		}
 
 		if (!data.tryBeginDailyRefresh(currentDay)) {
-			PlayerBlockStatus.LOGGER.info(
+			PlayerBlockStatus.LOGGER.debug(
 					"[pbs daily] trySchedule aborted for {} on day {} (tryBeginDailyRefresh returned false)",
 					level.dimension().location(),
 					currentDay
@@ -109,7 +109,7 @@ public final class TerritoryDailyProcessor {
 
 		Map<Long, ChunkStateMachine.NeighborChunkView> neighborContext = buildNeighborContext(data, dirtyKeys);
 		List<DailyChunkSnapshot> snapshots = captureSnapshots(level, data, safeChecker, dirtyKeys);
-		PlayerBlockStatus.LOGGER.info(
+		PlayerBlockStatus.LOGGER.debug(
 				"[pbs daily] captured {} snapshots for {} (requested dirty={})",
 				snapshots.size(),
 				level.dimension().location(),
@@ -119,7 +119,7 @@ public final class TerritoryDailyProcessor {
 		MinecraftServer server = level.getServer();
 
 		EXECUTOR.submit(() -> {
-			PlayerBlockStatus.LOGGER.info(
+			PlayerBlockStatus.LOGGER.debug(
 					"[pbs daily] async compute started for {} on worker thread",
 					level.dimension().location()
 			);
@@ -218,7 +218,7 @@ public final class TerritoryDailyProcessor {
 							snapshot.scoreModifiers(),
 							orgProvider
 					);
-					PlayerBlockStatus.LOGGER.info(
+					PlayerBlockStatus.LOGGER.debug(
 							"[pbs daily][{}] score compute: placedBlocks={}, stayScores={}, modifiers={}, blockScorePerBlock={}, totals={}",
 							chunkPos,
 							snapshot.placedBlocks().size(),
@@ -241,7 +241,7 @@ public final class TerritoryDailyProcessor {
 			BaseStateResult base = ChunkStateMachine.computeBaseStateFromSnapshot(snapshot);
 			baseStates.put(snapshot.chunkKey(), base.state());
 			occupyingOrgs.put(snapshot.chunkKey(), base.occupyingOrg());
-			PlayerBlockStatus.LOGGER.info(
+			PlayerBlockStatus.LOGGER.debug(
 					"[pbs daily][{}] base state: {} -> {}, org={}, threshold={}",
 					new ChunkPos(snapshot.chunkKey()),
 					snapshot.previousState(),
@@ -304,7 +304,7 @@ public final class TerritoryDailyProcessor {
 					if (previousState != finalState) {
 						stateChangedKeys.add(chunkKey);
 					}
-					PlayerBlockStatus.LOGGER.info(
+					PlayerBlockStatus.LOGGER.debug(
 							"[pbs daily][{}] applied: state={}, org={}, cachedScores={}",
 							new ChunkPos(chunkKey),
 							finalState,
@@ -406,7 +406,7 @@ public final class TerritoryDailyProcessor {
 					data.persistChunkChange(chunkKey, chunk);
 					index.replaceChunk(chunkKey, ChunkState.HOSTILE_BORDER, null);
 					corrected.add(chunkKey);
-					PlayerBlockStatus.LOGGER.info(
+					PlayerBlockStatus.LOGGER.debug(
 							"[pbs daily][{}] neighborhood fix: NATURAL -> HOSTILE_BORDER (border within chebyshev {})",
 							new ChunkPos(chunkKey),
 							extension
@@ -420,7 +420,7 @@ public final class TerritoryDailyProcessor {
 					data.persistChunkChange(chunkKey, chunk);
 					index.replaceChunk(chunkKey, ChunkState.OCCUPIED, org);
 					corrected.add(chunkKey);
-					PlayerBlockStatus.LOGGER.info(
+					PlayerBlockStatus.LOGGER.debug(
 							"[pbs daily][{}] neighborhood fix: BORDER -> OCCUPIED (all cardinal own occupied family)",
 							new ChunkPos(chunkKey)
 					);

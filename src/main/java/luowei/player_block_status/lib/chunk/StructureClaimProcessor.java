@@ -44,7 +44,7 @@ public final class StructureClaimProcessor {
 
 		ClaimJob job = new ClaimJob(owner, seed);
 		JOBS_BY_DIMENSION.computeIfAbsent(level.dimension(), key -> new ArrayDeque<>()).addLast(job);
-		PlayerBlockStatus.LOGGER.info(
+		PlayerBlockStatus.LOGGER.debug(
 				"[pbs claim] started owner={} seed={} neighbors={}",
 				owner,
 				seed,
@@ -83,7 +83,7 @@ public final class StructureClaimProcessor {
 			BlockPos pos = job.queue.pollFirst();
 			if (pos == null) {
 				jobs.pollFirst();
-				PlayerBlockStatus.LOGGER.info(
+				PlayerBlockStatus.LOGGER.debug(
 						"[pbs claim] completed owner={} claimed={} seed={}",
 						job.owner,
 						job.claimedCount,
@@ -129,7 +129,7 @@ public final class StructureClaimProcessor {
 		private boolean claimSentinel(WorldRegionData data, BlockPos pos) {
 			if (!seedLogged) {
 				UUID seedOwner = data.getPlacedBlockOwner(seed);
-				PlayerBlockStatus.LOGGER.info(
+				PlayerBlockStatus.LOGGER.debug(
 						"[pbs claim] seed-owner seed={} owner={} sentinel={}",
 						seed,
 						seedOwner,
@@ -141,7 +141,7 @@ public final class StructureClaimProcessor {
 			UUID current = data.getPlacedBlockOwner(pos);
 			boolean sentinel = TerritoryConfig.isStructureSentinel(current);
 			if (claimedCount == 0) {
-				PlayerBlockStatus.LOGGER.info(
+				PlayerBlockStatus.LOGGER.debug(
 						"[pbs claim] probe pos={} owner={} sentinel={}",
 						pos,
 						current,
@@ -154,7 +154,7 @@ public final class StructureClaimProcessor {
 
 			data.claimStructureBlock(pos, owner);
 			claimedCount++;
-			PlayerBlockStatus.LOGGER.info("[pbs claim] claimed pos={} count={}", pos, claimedCount);
+			PlayerBlockStatus.LOGGER.debug("[pbs claim] claimed pos={} count={}", pos, claimedCount);
 			return true;
 		}
 	}

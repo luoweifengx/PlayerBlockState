@@ -89,6 +89,7 @@ public final class OrganizationCommands {
 		return OrganizationService.getOrganization(source.getServer(), orgId)
 				.map(record -> {
 					source.sendSuccess(() -> Component.literal("Organization{name=" + record.name()
+							+ ", territory=" + EntityDisplayNames.resolveTerritoryName(source.getServer(), record.id())
 							+ ", id=" + record.id() + ", owner=" + record.owner()
 							+ ", members=" + record.members() + "}"), false);
 					return 1;

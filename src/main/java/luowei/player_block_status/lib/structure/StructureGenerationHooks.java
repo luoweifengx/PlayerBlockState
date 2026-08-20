@@ -160,7 +160,7 @@ public final class StructureGenerationHooks {
 			int captured,
 			String detail
 	) {
-		PlayerBlockStatus.LOGGER.info(
+		PlayerBlockStatus.LOGGER.debug(
 				"[pbs structure] placeInChunk {} structure={} origin={} generating={} capturing={} captured={} detail={} thread={}",
 				phase,
 				structureId,

@@ -28,6 +28,7 @@ import luowei.player_block_status.lib.api.PlayerBlockStatusLib;
 import luowei.player_block_status.lib.chunk.ChunkState;
 import luowei.player_block_status.lib.chunk.ChunkTerritoryAccess;
 import luowei.player_block_status.lib.chunk.ChunkTerritoryData;
+import luowei.player_block_status.lib.chunk.RegionManager;
 import luowei.player_block_status.lib.chunk.TerritoryConfig;
 import luowei.player_block_status.lib.chunk.TerritoryDailyProcessor.ScheduleAttempt;
 import luowei.player_block_status.lib.chunk.TerritoryDailyProcessor.ScheduleResult;
@@ -140,7 +141,11 @@ public final class ChunkForceCommands {
 
 	private static int runRefresh(CommandContext<CommandSourceStack> ctx) {
 		ServerLevel level = ctx.getSource().getLevel();
-		ScheduleAttempt attempt = PlayerBlockStatusLib.forceDailyRefresh(level);
+		ScheduleAttempt attempt = RegionManager.forceDailyRefresh(
+				level,
+				PlayerBlockStatusLib.getOrganizationProvider(),
+				PlayerBlockStatusLib.getSafeBiomeChecker()
+		);
 
 		if (attempt.result() == ScheduleResult.SCHEDULED) {
 			ctx.getSource().sendSuccess(
@@ -180,7 +185,7 @@ public final class ChunkForceCommands {
 		ChunkPos center = resolveCenter(ctx, here);
 		ServerLevel level = ctx.getSource().getLevel();
 
-		int changed = PlayerBlockStatusLib.forceSetChunks(level, center, radius, state, updateOwner, owner);
+		int changed = RegionManager.forceSetChunks(level, center, radius, state, updateOwner, owner);
 		String stateText = updateState ? state.name() : "(unchanged)";
 		String ownerText = !updateOwner ? "(unchanged)" : (owner == null ? "none" : owner.toString());
 		ctx.getSource().sendSuccess(

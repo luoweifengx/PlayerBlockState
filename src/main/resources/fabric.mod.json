@@ -5,13 +5,13 @@
 	"name": "Player Block Status",
 	"description": "Library mod for chunk territory state, player block tracking, and debug map export.",
 	"authors": [
-		"Me!"
+		"luoweifengx"
 	],
 	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"homepage": "https://github.com/luoweifengx/PlayerBlockState",
+		"sources": "https://github.com/luoweifengx/PlayerBlockState"
 	},
-	"license": "CC0-1.0",
+	"license": "MIT",
 	"icon": "assets/player-block-status/icon.png",
 	"environment": "*",
 	"entrypoints": {

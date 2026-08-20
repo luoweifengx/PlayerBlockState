@@ -194,7 +194,7 @@ public final class WorldRegionData {
 		persistChunkChange(chunkKey, chunk);
 		markChunkDirty(chunkKey);
 		StructureClaimProcessor.enqueue(level, pos, scoreEntity);
-		PlayerBlockStatus.LOGGER.info(
+		PlayerBlockStatus.LOGGER.debug(
 				"[pbs] block placed at {} in chunk {} by {} (placedCount={}, dirtyCount={})",
 				pos,
 				new ChunkPos(chunkKey),
@@ -238,7 +238,7 @@ public final class WorldRegionData {
 	public void onBlockRemoved(BlockPos pos) {
 		long chunkKey = new ChunkPos(pos).toLong();
 		ChunkTerritoryData chunk = getChunk(chunkKey);
-		if (chunk == null) {
+		if (chunk == null || chunk.getPlacedBlockOwner(pos) == null) {
 			return;
 		}
 
@@ -246,6 +246,12 @@ public final class WorldRegionData {
 		persistChunkChange(chunkKey, chunk);
 		maybeRemoveEmptyChunk(chunkKey, chunk);
 		markChunkDirty(chunkKey);
+		PlayerBlockStatus.LOGGER.debug(
+				"[pbs] tracked block removed at {} in chunk {} (placedCount={})",
+				pos,
+				new ChunkPos(chunkKey),
+				chunk.getPlacedBlocks().size()
+		);
 	}
 
 	public void onPlayerStay(ServerLevel level, UUID playerId, ChunkPos chunkPos, OrganizationProvider orgProvider) {
@@ -267,22 +273,12 @@ public final class WorldRegionData {
 	}
 
 	public void transferPlayerToOrg(UUID playerId, UUID orgId) {
-		Set<Long> affectedChunks = findChunksForEntity(playerId);
-		for (long chunkKey : affectedChunks) {
-			ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
-			chunk.remapEntitySilent(playerId, orgId);
-			persistChunkChange(chunkKey, chunk);
-		}
+		remapOwnedChunks(playerId, orgId);
 		dimensionData.getEntityChunkIndex().transferPlayerToOrg(playerId, orgId);
 	}
 
 	public void remapOrganization(UUID from, UUID to) {
-		Set<Long> affectedChunks = findChunksForEntity(from);
-		for (long chunkKey : affectedChunks) {
-			ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
-			chunk.remapEntitySilent(from, to);
-			persistChunkChange(chunkKey, chunk);
-		}
+		remapOwnedChunks(from, to);
 		dimensionData.getEntityChunkIndex().mergeOrganization(from, to);
 	}
 
@@ -366,15 +362,20 @@ public final class WorldRegionData {
 		}
 	}
 
-	private Set<Long> findChunksForEntity(UUID entityId) {
-		Set<Long> affectedChunks = new HashSet<>();
-		for (long chunkKey : dimensionData.getActiveChunkKeys()) {
-			ChunkTerritoryData chunk = getChunk(chunkKey);
-			if (chunk != null && chunk.referencesEntity(entityId)) {
-				affectedChunks.add(chunkKey);
-			}
+	/**
+	 * 只处理该实体 OCCUPIED ∪ BORDER 索引中的区块，避免扫描全部 active 并 force-load。
+	 * 索引为空则跳过迭代。未加载的索引区块会按需加载。
+	 */
+	private void remapOwnedChunks(UUID from, UUID to) {
+		Set<Long> affectedChunks = dimensionData.getEntityChunkIndex().getOwnedChunks(from);
+		if (affectedChunks.isEmpty()) {
+			return;
 		}
-		return affectedChunks;
+		for (long chunkKey : affectedChunks) {
+			ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
+			chunk.remapEntitySilent(from, to);
+			persistChunkChange(chunkKey, chunk);
+		}
 	}
 
 	private void maybeRemoveEmptyChunk(long chunkKey, ChunkTerritoryData chunk) {

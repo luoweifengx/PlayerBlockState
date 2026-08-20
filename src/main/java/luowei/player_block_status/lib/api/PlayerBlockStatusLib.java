@@ -1,12 +1,12 @@
 package luowei.player_block_status.lib.api;
 
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -14,19 +14,18 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
 
 import luowei.player_block_status.lib.chunk.ChunkState;
-import luowei.player_block_status.lib.chunk.ChunkTerritoryData;
 import luowei.player_block_status.lib.chunk.RegionManager;
 import luowei.player_block_status.lib.chunk.StructureBounds;
-import luowei.player_block_status.lib.chunk.TerritoryDailyProcessor.ScheduleAttempt;
-import luowei.player_block_status.lib.chunk.WorldRegionData;
-import luowei.player_block_status.lib.debug.ChunkDebugMapRenderer;
 import luowei.player_block_status.lib.org.EntityDisplayNames;
 import luowei.player_block_status.lib.org.EntityPollList;
 import luowei.player_block_status.lib.org.OrganizationService;
 import luowei.player_block_status.lib.structure.StructureTerritoryRegistry;
 
 /**
- * 对外公开 API，供其他模组注册回调与查询区块信息。
+ * 对外公开 API：注册回调、通知删分、只读查询区块。
+ * <p>
+ * 查询一律返回不可变视图，不暴露内部 {@code ChunkTerritoryData}。
+ * 强制改写区块、导出调试地图不在本类；请用 OP 指令 {@code /pbs set}、{@code /pbs refresh}、{@code /pbs map}。
  */
 public final class PlayerBlockStatusLib {
 	private static OrganizationProvider organizationProvider = OrganizationProvider.NONE;
@@ -104,12 +103,28 @@ public final class PlayerBlockStatusLib {
 		RegionManager.remapOrganization(level, from, to);
 	}
 
-	public static Optional<ChunkTerritoryData> queryChunk(ServerLevel level, ChunkPos chunkPos) {
-		return WorldRegionData.get(level).queryChunk(chunkPos);
+	/**
+	 * 通知领土系统：该格已被破坏或移除，应从 {@code placed_blocks} 去掉（幂等）。
+	 * <p>
+	 * 给绕过原版 {@link net.minecraft.world.level.chunk.LevelChunk#setBlockState} 的外部模组，
+	 * 或需要自定义「此格不应再计分」的行为。原版挖掘、爆炸、活塞、流体、火焰、重力等
+	 * 只要最终写入 {@code LevelChunk#setBlockState}，由内部 mixin 自动通知，无需再调本方法。
+	 * <p>
+	 * 仅应在服务端逻辑线程调用。内部 mixin 与本方法均汇入
+	 * {@link RegionManager#onBlockRemoved}。
+	 */
+	public static void notifyTrackedBlockRemoved(ServerLevel level, BlockPos pos) {
+		RegionManager.onBlockRemoved(level, pos);
 	}
 
-	public static Optional<ChunkTerritoryView> queryChunkView(ServerLevel level, ChunkPos chunkPos) {
+	/** 只读查询区块领土；无领土数据时 empty。 */
+	public static Optional<ChunkTerritoryView> queryChunk(ServerLevel level, ChunkPos chunkPos) {
 		return TerritoryQueries.queryChunk(level, chunkPos);
+	}
+
+	/** {@link #queryChunk} 的别名。 */
+	public static Optional<ChunkTerritoryView> queryChunkView(ServerLevel level, ChunkPos chunkPos) {
+		return queryChunk(level, chunkPos);
 	}
 
 	public static Optional<ChunkTerritoryView> queryChunkAtEntity(ServerLevel level, Entity entity) {
@@ -117,7 +132,7 @@ public final class PlayerBlockStatusLib {
 	}
 
 	public static Optional<ChunkState> queryChunkState(ServerLevel level, ChunkPos chunkPos) {
-		return queryChunk(level, chunkPos).map(ChunkTerritoryData::getState);
+		return queryChunk(level, chunkPos).map(ChunkTerritoryView::getState);
 	}
 
 	/**
@@ -178,19 +193,15 @@ public final class PlayerBlockStatusLib {
 		return TerritoryQueries.decodeChunkStateMap(encoded);
 	}
 
-	public static Map<Long, ChunkTerritoryData> queryAllChunks(ServerLevel level) {
-		return WorldRegionData.get(level).getAllChunks();
-	}
-
-	public static Optional<UUID> queryPlayerOrganization(net.minecraft.server.MinecraftServer server, UUID playerId) {
-		return luowei.player_block_status.lib.org.OrganizationService.getOrganizationId(server, playerId);
+	public static Optional<UUID> queryPlayerOrganization(MinecraftServer server, UUID playerId) {
+		return OrganizationService.getOrganizationId(server, playerId);
 	}
 
 	public static Optional<luowei.player_block_status.lib.org.OrganizationRecord> queryOrganization(
-			net.minecraft.server.MinecraftServer server,
+			MinecraftServer server,
 			UUID orgId
 	) {
-		return luowei.player_block_status.lib.org.OrganizationService.getOrganization(server, orgId);
+		return OrganizationService.getOrganization(server, orgId);
 	}
 
 	/**
@@ -201,50 +212,11 @@ public final class PlayerBlockStatusLib {
 		return EntityDisplayNames.resolve(server, entityId);
 	}
 
-	public static Path exportDebugMap(ServerLevel level, ChunkPos center, int radiusChunks, Path outputPath) {
-		return ChunkDebugMapRenderer.render(level, center, radiusChunks, outputPath);
-	}
-
-	public static Path exportDebugMap(ServerLevel level, Path outputPath) {
-		return ChunkDebugMapRenderer.renderFull(level, outputPath);
-	}
-
-	/** 导出领土划分图：按所属玩家/组织邻接着色，死亡为黑，其余为白。 */
-	public static Path exportOwnerMap(ServerLevel level, ChunkPos center, int radiusChunks, Path outputPath) {
-		return ChunkDebugMapRenderer.renderOwnerMap(level, center, radiusChunks, outputPath);
-	}
-
 	/**
-	 * 调试用：在切比雪夫半径内强制设置区块类型与/或所属组织/玩家，并标脏以便后续每日重算纳入。
-	 *
-	 * @param state        非 null 时写入该状态；null 表示不改状态
-	 * @param updateOwner  true 时写入归属；false 表示不改归属
-	 * @param owner        归属 UUID（组织或玩家）；{@code updateOwner=true} 且为 null 时清空归属
-	 * @return 实际改写的区块数
+	 * 将玩家或组织 UUID 解析为地区/领地显示名（不是玩家名、不是组织名）。
+	 * 已自定义则原样返回；否则为「{实体显示名}的领地」。
 	 */
-	public static int forceSetChunks(
-			ServerLevel level,
-			ChunkPos center,
-			int radiusChunks,
-			ChunkState state,
-			boolean updateOwner,
-			UUID owner
-	) {
-		return RegionManager.forceSetChunks(level, center, radiusChunks, state, updateOwner, owner);
-	}
-
-	/** 仅强制设置区块状态（不改归属）。 */
-	public static int forceSetChunkState(ServerLevel level, ChunkPos center, int radiusChunks, ChunkState state) {
-		return forceSetChunks(level, center, radiusChunks, state, false, null);
-	}
-
-	/** 仅强制设置区块归属（不改状态）；{@code owner == null} 时清空归属。 */
-	public static int forceSetChunkOwner(ServerLevel level, ChunkPos center, int radiusChunks, UUID owner) {
-		return forceSetChunks(level, center, radiusChunks, null, true, owner);
-	}
-
-	/** 调试用：立即调度当前维度一次标脏区块每日重算。 */
-	public static ScheduleAttempt forceDailyRefresh(ServerLevel level) {
-		return RegionManager.forceDailyRefresh(level, organizationProvider, safeBiomeChecker);
+	public static String resolveTerritoryName(MinecraftServer server, UUID entityId) {
+		return EntityDisplayNames.resolveTerritoryName(server, entityId);
 	}
 }

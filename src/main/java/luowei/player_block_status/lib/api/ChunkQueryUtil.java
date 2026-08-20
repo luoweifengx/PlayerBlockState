@@ -7,10 +7,9 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 
 import luowei.player_block_status.lib.chunk.ChunkState;
-import luowei.player_block_status.lib.chunk.ChunkTerritoryData;
 
 /**
- * 程序化查询区块领土信息的工具类。
+ * 程序化查询区块领土信息的工具类（只读）。
  */
 public final class ChunkQueryUtil {
 	private ChunkQueryUtil() {
@@ -34,18 +33,18 @@ public final class ChunkQueryUtil {
 
 	public static ChunkInfo query(ServerLevel level, ChunkPos chunkPos) {
 		return PlayerBlockStatusLib.queryChunk(level, chunkPos)
-				.map(data -> toInfo(chunkPos, data))
+				.map(ChunkQueryUtil::toInfo)
 				.orElse(new ChunkInfo(chunkPos, ChunkState.NATURAL, null, 0, Map.of(), Map.of()));
 	}
 
-	public static ChunkInfo toInfo(ChunkPos chunkPos, ChunkTerritoryData data) {
+	public static ChunkInfo toInfo(ChunkTerritoryView view) {
 		return new ChunkInfo(
-				chunkPos,
-				data.getState(),
-				data.getOccupyingOrg(),
-				data.getPlacedBlocks().size(),
-				Map.copyOf(data.getCachedScores()),
-				Map.copyOf(data.getStayScores())
+				view.getChunkPos(),
+				view.getState(),
+				view.getOccupyingOrg(),
+				view.getPlacedBlockCount(),
+				view.getScores(),
+				view.getPendingStayScores()
 		);
 	}
 }

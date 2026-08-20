@@ -18,6 +18,14 @@ public final class ChunkTerritoryAccess {
 
 	public static ChunkTerritoryData getIfPresent(ServerLevel level, ChunkPos chunkPos) {
 		LevelChunk chunk = level.getChunk(chunkPos.x, chunkPos.z);
+		return getIfPresent(chunk);
+	}
+
+	/**
+	 * 已持有 {@link LevelChunk} 时读取 attachment，不触发 {@code getChunk}。
+	 * 无领土数据返回 {@code null}。
+	 */
+	public static ChunkTerritoryData getIfPresent(LevelChunk chunk) {
 		return chunk.getAttached(TerritoryAttachments.CHUNK_TERRITORY);
 	}
 

@@ -15,7 +15,7 @@ public final class MapExportTrace {
 	}
 
 	public void step(String message) {
-		PlayerBlockStatus.LOGGER.info("[pbs map][{}] +{}ms {}",
+		PlayerBlockStatus.LOGGER.debug("[pbs map][{}] +{}ms {}",
 				label,
 				elapsedMillis(),
 				message

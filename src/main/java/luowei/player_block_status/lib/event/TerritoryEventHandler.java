@@ -12,7 +12,6 @@ import java.util.concurrent.Executors;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
@@ -42,10 +41,12 @@ import luowei.player_block_status.lib.debug.ChunkForceCommands;
 import luowei.player_block_status.lib.debug.MapExportTrace;
 import luowei.player_block_status.lib.org.EntityDisplayNames;
 import luowei.player_block_status.lib.org.OrganizationCommands;
+import luowei.player_block_status.lib.org.OrganizationData;
+import luowei.player_block_status.lib.org.TerritoryNameCommands;
 import luowei.player_block_status.lib.structure.StructureSentinelWriteQueue;
 
 /**
- * 注册方块、停留、死亡与每日刷新事件。
+ * 注册停留、死亡与每日刷新事件。方块放置/删分由 mixin 与对外 API 负责。
  */
 public final class TerritoryEventHandler {
 	private static final int MAP_RADIUS_MAX = 128;
@@ -60,12 +61,6 @@ public final class TerritoryEventHandler {
 	}
 
 	public static void register() {
-		PlayerBlockBreakEvents.AFTER.register((level, player, pos, state, blockEntity) -> {
-			if (level instanceof ServerLevel serverLevel) {
-				RegionManager.onBlockRemoved(serverLevel, pos);
-			}
-		});
-
 		ServerTickEvents.END_WORLD_TICK.register(level -> {
 			if (!(level instanceof ServerLevel serverLevel)) {
 				return;
@@ -89,6 +84,7 @@ public final class TerritoryEventHandler {
 		CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
 			dispatcher.register(Commands.literal("pbs")
 					.then(OrganizationCommands.buildOrgNode())
+					.then(TerritoryNameCommands.buildTerritoryNode())
 					.then(ChunkForceCommands.buildRefreshNode())
 					.then(ChunkForceCommands.buildSetNode())
 					.then(ChunkForceCommands.buildSentinelNode())
@@ -250,14 +246,34 @@ public final class TerritoryEventHandler {
 	}
 
 	private static void maybeNotifyTerritoryEnter(ServerPlayer player, UUID previousOwner, UUID currentOwner) {
+		// 物品暂缓，先用指令。进入提示读地区/领地显示名字段本身。
 		if (!TerritoryConfig.showTerritoryEnterMessage || currentOwner == null) {
+			return;
+		}
+		if (!TerritoryEnterMessagePrefs.showsEnterMessage(player.getUUID())) {
 			return;
 		}
 		if (Objects.equals(previousOwner, currentOwner)) {
 			return;
 		}
-		String name = EntityDisplayNames.resolve(player.getServer(), currentOwner);
-		player.displayClientMessage(Component.literal(name + "的领地"), true);
+		String publicName = EntityDisplayNames.resolveTerritoryName(player.getServer(), currentOwner);
+		String display = isOwnTerritory(player, currentOwner)
+				? TerritoryEnterMessagePrefs.formatOwnEnter(player, publicName)
+				: publicName;
+		player.displayClientMessage(Component.literal(display), true);
+	}
+
+	/**
+	 * 自己的领地：区块 occupyingOrg 等于玩家 UUID，或等于玩家所在组织 UUID。
+	 */
+	private static boolean isOwnTerritory(ServerPlayer player, UUID occupyingId) {
+		if (occupyingId.equals(player.getUUID())) {
+			return true;
+		}
+		return OrganizationData.get(player.getServer())
+				.getPlayerOrganization(player.getUUID())
+				.filter(occupyingId::equals)
+				.isPresent();
 	}
 
 	public static void onPlayerDeath(ServerPlayer player) {

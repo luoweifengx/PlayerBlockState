@@ -4,7 +4,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
 /**
- * 领土系统阈值与加分常量，可由消费模组在启动时覆盖。
+ * 领土系统阈值与加分常量。启动时从 {@code config/player-block-status.json} 读入，
+ * 也可由消费模组在其后覆盖。
  */
 public final class TerritoryConfig {
 	/**
@@ -20,7 +21,7 @@ public final class TerritoryConfig {
 	/** 从占领/边界退回自然状态：所有玩家分数均低于此值 */
 	public static int naturalReturnThreshold = 500;
 	public static int deathThreshold = -100;
-	/** 每放置方块得分（调试临时值；原始值：4） */
+	/** 每放置方块得分 */
 	public static int blockScorePerBlock = 300;
 	public static int stayScorePerInterval = 3;
 	public static int stayTickInterval = 100;
@@ -36,7 +37,12 @@ public final class TerritoryConfig {
 	public static int dailyRefreshTime = 0;
 	/** 结构 sentinel 链式认领每 tick 最多改写的方块数 */
 	public static int structureClaimBlocksPerTick = 512;
-	/** 进入新所属领地时是否向玩家显示「xxx的领地」 */
+	/** 进入自己的领地时的默认提示（可被客户端配置 / {@code /pbs territory backmine} 覆盖） */
+	public static final String DEFAULT_OWN_TERRITORY_ENTER_MESSAGE = "自己的领地";
+	public static String ownTerritoryEnterMessage = DEFAULT_OWN_TERRITORY_ENTER_MESSAGE;
+	/** 进入自己的领地时的显示类型：{@code sight of me} 用上面的文案；{@code sight of others} 用公开地区名；{@code off} 关闭提示 */
+	public static String enterMessageInfoType = "sight of me";
+	/** 进入新所属领地时是否向玩家显示地区名 */
 	public static boolean showTerritoryEnterMessage = true;
 
 	private TerritoryConfig() {

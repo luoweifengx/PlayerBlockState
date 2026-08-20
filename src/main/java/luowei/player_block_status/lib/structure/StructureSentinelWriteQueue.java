@@ -93,7 +93,7 @@ public final class StructureSentinelWriteQueue {
 			if (pos == null) {
 				jobs.poll();
 				if (job.firstRegistration || job.marked > 0) {
-					PlayerBlockStatus.LOGGER.info(
+					PlayerBlockStatus.LOGGER.debug(
 							"Structure {} placed at {}: marked {} template blocks as sentinel (firstRegistration={})",
 							job.structureKey.location(),
 							job.originChunk,

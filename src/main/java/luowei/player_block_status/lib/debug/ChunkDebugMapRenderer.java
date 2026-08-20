@@ -24,7 +24,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 
 import luowei.player_block_status.PlayerBlockStatus;
-import luowei.player_block_status.lib.api.PlayerBlockStatusLib;
 import luowei.player_block_status.lib.chunk.ChunkState;
 import luowei.player_block_status.lib.chunk.ChunkTerritoryData;
 import luowei.player_block_status.lib.chunk.WorldRegionData;
@@ -250,7 +249,7 @@ public final class ChunkDebugMapRenderer {
 	}
 
 	public static Path renderFull(ServerLevel level, Path outputPath) {
-		Map<Long, ChunkTerritoryData> chunks = PlayerBlockStatusLib.queryAllChunks(level);
+		Map<Long, ChunkTerritoryData> chunks = WorldRegionData.get(level).getAllChunks();
 		if (chunks.isEmpty()) {
 			BufferedImage empty = new BufferedImage(PIXELS_PER_CHUNK, PIXELS_PER_CHUNK, BufferedImage.TYPE_INT_RGB);
 			Graphics2D graphics = empty.createGraphics();

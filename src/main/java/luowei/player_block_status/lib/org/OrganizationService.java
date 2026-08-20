@@ -24,8 +24,15 @@ public final class OrganizationService {
 			throw new OrganizationException("Already in an organization. Leave first with /pbs org leave");
 		}
 
+		String orgName = name == null ? "" : name.trim();
+		for (OrganizationRecord existing : data.getOrganizations().values()) {
+			if (orgName.equals(existing.name())) {
+				throw new OrganizationException("Organization already exists: " + orgName);
+			}
+		}
+
 		UUID orgId = UUID.randomUUID();
-		OrganizationRecord record = data.createOrganization(orgId, name, founder.getUUID());
+		OrganizationRecord record = data.createOrganization(orgId, orgName, founder.getUUID());
 		data.getPollList().onOrganizationCreated(orgId, List.of(founder.getUUID()));
 		transferPlayerTerritoryAcrossDimensions(server, founder.getUUID(), orgId);
 		return record;
@@ -102,9 +109,40 @@ public final class OrganizationService {
 		return OrganizationData.get(server).getPlayerOrganization(player.getUUID())
 				.flatMap(orgId -> OrganizationData.get(server).getOrganization(orgId))
 				.map(record -> Component.literal("Organization{name=" + record.name()
+						+ ", territory=" + EntityDisplayNames.resolveTerritoryName(server, record.id())
 						+ ", id=" + record.id() + ", owner=" + record.owner()
 						+ ", members=" + record.members().size() + "}"))
 				.orElse(Component.literal("Not in an organization"));
+	}
+
+	/**
+	 * 改玩家个人地区/领地显示名（不是玩家名）。加入组织后此字段仍保留，
+	 * 但进领地提示看的是区块 occupyingOrg（可能是组织 UUID）。
+	 */
+	public static String setPlayerTerritoryName(MinecraftServer server, UUID playerId, String rawName) {
+		String name = requireTerritoryName(rawName);
+		OrganizationData.get(server).setPlayerTerritoryName(playerId, name);
+		return name;
+	}
+
+	/**
+	 * 改组织地区/领地显示名（不是组织名）。
+	 */
+	public static String setOrganizationTerritoryName(MinecraftServer server, UUID orgId, String rawName) {
+		if (OrganizationData.get(server).getOrganization(orgId).isEmpty()) {
+			throw new OrganizationException("Organization not found: " + orgId);
+		}
+		String name = requireTerritoryName(rawName);
+		OrganizationData.get(server).setOrganizationTerritoryName(orgId, name);
+		return name;
+	}
+
+	private static String requireTerritoryName(String rawName) {
+		try {
+			return EntityDisplayNames.requireValidTerritoryName(rawName);
+		} catch (IllegalArgumentException exception) {
+			throw new OrganizationException(exception.getMessage());
+		}
 	}
 
 	private static void transferPlayerTerritoryAcrossDimensions(MinecraftServer server, UUID playerId, UUID orgId) {

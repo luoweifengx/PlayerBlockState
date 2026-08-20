@@ -5,6 +5,7 @@
 	"mixins": [
 		"BlockItemMixin",
 		"ChunkSetBlockStateMixin",
+		"LevelChunkSetBlockStateMixin",
 		"ServerPlayerMixin",
 		"StructureStartMixin",
 		"WorldGenRegionMixin"
