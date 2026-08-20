@@ -20,6 +20,7 @@ import net.minecraft.server.players.GameProfileCache;
  */
 public final class EntityDisplayNames {
 	public static final int TERRITORY_NAME_MAX_LENGTH = 32;
+	public static final int ORGANIZATION_NAME_MAX_LENGTH = 32;
 	public static final String DEFAULT_TERRITORY_NAME_SUFFIX = "的领地";
 
 	private EntityDisplayNames() {
@@ -108,20 +109,32 @@ public final class EntityDisplayNames {
 	 * @throws IllegalArgumentException 名称不合法
 	 */
 	public static String requireValidTerritoryName(String raw) {
+		return requireValidDisplayName(raw, "Territory/region name", TERRITORY_NAME_MAX_LENGTH);
+	}
+
+	/**
+	 * 校验组织名：去首尾空白、非空、长度上限、禁止控制字符。
+	 *
+	 * @throws IllegalArgumentException 名称不合法
+	 */
+	public static String requireValidOrganizationName(String raw) {
+		return requireValidDisplayName(raw, "Organization name", ORGANIZATION_NAME_MAX_LENGTH);
+	}
+
+	private static String requireValidDisplayName(String raw, String label, int maxLength) {
 		if (raw == null) {
-			throw new IllegalArgumentException("Territory/region name cannot be empty");
+			throw new IllegalArgumentException(label + " cannot be empty");
 		}
 		String name = raw.trim();
 		if (name.isEmpty()) {
-			throw new IllegalArgumentException("Territory/region name cannot be empty");
+			throw new IllegalArgumentException(label + " cannot be empty");
 		}
-		if (name.length() > TERRITORY_NAME_MAX_LENGTH) {
-			throw new IllegalArgumentException(
-					"Territory/region name is too long (max " + TERRITORY_NAME_MAX_LENGTH + " characters)");
+		if (name.length() > maxLength) {
+			throw new IllegalArgumentException(label + " is too long (max " + maxLength + " characters)");
 		}
 		for (int i = 0; i < name.length(); i++) {
 			if (Character.isISOControl(name.charAt(i))) {
-				throw new IllegalArgumentException("Territory/region name cannot contain control characters");
+				throw new IllegalArgumentException(label + " cannot contain control characters");
 			}
 		}
 		return name;

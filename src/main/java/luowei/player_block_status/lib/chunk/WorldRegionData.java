@@ -410,8 +410,9 @@ public final class WorldRegionData {
 	}
 
 	private UUID resolveScoreEntity(ServerLevel level, UUID playerId, OrganizationProvider orgProvider) {
-		return level.getServer().getPlayerList().getPlayer(playerId) != null
-				? orgProvider.getOrganizationId(level.getServer().getPlayerList().getPlayer(playerId)).orElse(playerId)
-				: playerId;
+		if (orgProvider == null || playerId == null) {
+			return playerId;
+		}
+		return orgProvider.getOrganizationId(level.getServer(), playerId).orElse(playerId);
 	}
 }

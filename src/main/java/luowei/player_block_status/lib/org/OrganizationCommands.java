@@ -9,6 +9,7 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.commands.arguments.UuidArgument;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -16,7 +17,7 @@ import net.minecraft.server.level.ServerPlayer;
 import luowei.player_block_status.lib.org.OrganizationService.OrganizationException;
 
 /**
- * /pbs org 子命令：创建、加入、离开、查询与合并组织。
+ * /pbs org 子命令：创建、邀请、接受/拒绝、离开、踢人、移交主人、查询与合并组织。
  */
 public final class OrganizationCommands {
 	private OrganizationCommands() {
@@ -29,14 +30,30 @@ public final class OrganizationCommands {
 						.then(Commands.argument("name", StringArgumentType.greedyString())
 								.executes(context -> create(context.getSource(),
 										StringArgumentType.getString(context, "name")))))
-				.then(Commands.literal("join")
+				.then(Commands.literal("invite")
 						.requires(source -> source.getEntity() instanceof ServerPlayer)
-						.then(Commands.argument("orgId", UuidArgument.uuid())
-								.executes(context -> join(context.getSource(),
-										UuidArgument.getUuid(context, "orgId")))))
+						.then(Commands.argument("player", EntityArgument.player())
+								.executes(context -> invite(context.getSource(),
+										EntityArgument.getPlayer(context, "player")))))
+				.then(Commands.literal("accept")
+						.requires(source -> source.getEntity() instanceof ServerPlayer)
+						.executes(context -> accept(context.getSource())))
+				.then(Commands.literal("deny")
+						.requires(source -> source.getEntity() instanceof ServerPlayer)
+						.executes(context -> deny(context.getSource())))
 				.then(Commands.literal("leave")
 						.requires(source -> source.getEntity() instanceof ServerPlayer)
 						.executes(context -> leave(context.getSource())))
+				.then(Commands.literal("kick")
+						.requires(source -> source.getEntity() instanceof ServerPlayer)
+						.then(Commands.argument("player", EntityArgument.player())
+								.executes(context -> kick(context.getSource(),
+										EntityArgument.getPlayer(context, "player")))))
+				.then(Commands.literal("transfer")
+						.requires(source -> source.getEntity() instanceof ServerPlayer)
+						.then(Commands.argument("player", EntityArgument.player())
+								.executes(context -> transfer(context.getSource(),
+										EntityArgument.getPlayer(context, "player")))))
 				.then(Commands.literal("info")
 						.executes(context -> infoSelf(context.getSource()))
 						.then(Commands.argument("orgId", UuidArgument.uuid())
@@ -54,25 +71,71 @@ public final class OrganizationCommands {
 	private static int create(CommandSourceStack source, String name) {
 		return run(source, stack -> {
 			ServerPlayer player = stack.getPlayerOrException();
-			OrganizationRecord record = OrganizationService.createOrganization(stack.getServer(), player, name.trim());
-			stack.sendSuccess(() -> Component.literal("Created organization \"" + record.name()
-					+ "\" with id " + record.id()), true);
+			OrganizationRecord record = OrganizationService.createOrganization(stack.getServer(), player, name);
+			stack.sendSuccess(() -> Component.literal("Created organization \"" + record.name() + "\""), false);
 		});
 	}
 
-	private static int join(CommandSourceStack source, UUID orgId) {
+	private static int invite(CommandSourceStack source, ServerPlayer target) {
 		return run(source, stack -> {
 			ServerPlayer player = stack.getPlayerOrException();
-			OrganizationService.joinOrganization(stack.getServer(), player, orgId);
-			stack.sendSuccess(() -> Component.literal("Joined organization " + orgId), true);
+			OrganizationRecord record = OrganizationService.invitePlayer(stack.getServer(), player, target);
+			stack.sendSuccess(() -> Component.literal("Invited " + target.getGameProfile().getName()
+					+ " to organization \"" + record.name() + "\""), false);
+			target.sendSystemMessage(Component.literal(
+					"You have been invited to organization \"" + record.name()
+							+ "\". Use /pbs org accept or /pbs org deny."));
+		});
+	}
+
+	private static int accept(CommandSourceStack source) {
+		return run(source, stack -> {
+			ServerPlayer player = stack.getPlayerOrException();
+			OrganizationRecord record = OrganizationService.acceptInvite(stack.getServer(), player);
+			stack.sendSuccess(() -> Component.literal("Joined organization \"" + record.name() + "\""), false);
+		});
+	}
+
+	private static int deny(CommandSourceStack source) {
+		return run(source, stack -> {
+			ServerPlayer player = stack.getPlayerOrException();
+			OrganizationRecord record = OrganizationService.denyInvite(stack.getServer(), player);
+			stack.sendSuccess(() -> Component.literal("Declined invite to organization \"" + record.name() + "\""), false);
 		});
 	}
 
 	private static int leave(CommandSourceStack source) {
 		return run(source, stack -> {
 			ServerPlayer player = stack.getPlayerOrException();
-			OrganizationService.leaveOrganization(stack.getServer(), player);
-			stack.sendSuccess(() -> Component.literal("Left organization. Existing org territory remains with the organization."), true);
+			boolean dissolved = OrganizationService.leaveOrganization(stack.getServer(), player);
+			if (dissolved) {
+				stack.sendSuccess(() -> Component.literal(
+						"Left and disbanded the organization. Existing territory remains with the organization account."),
+						false);
+			} else {
+				stack.sendSuccess(() -> Component.literal(
+						"Left organization. Existing org territory remains with the organization."), false);
+			}
+		});
+	}
+
+	private static int kick(CommandSourceStack source, ServerPlayer target) {
+		return run(source, stack -> {
+			ServerPlayer player = stack.getPlayerOrException();
+			OrganizationService.kickMember(stack.getServer(), player, target);
+			stack.sendSuccess(() -> Component.literal("Kicked " + target.getGameProfile().getName()
+					+ " from the organization"), false);
+			target.sendSystemMessage(Component.literal("You were kicked from the organization."));
+		});
+	}
+
+	private static int transfer(CommandSourceStack source, ServerPlayer target) {
+		return run(source, stack -> {
+			ServerPlayer player = stack.getPlayerOrException();
+			OrganizationService.transferOwnership(stack.getServer(), player, target);
+			stack.sendSuccess(() -> Component.literal("Transferred organization ownership to "
+					+ target.getGameProfile().getName()), false);
+			target.sendSystemMessage(Component.literal("You are now the organization owner."));
 		});
 	}
 
@@ -88,10 +151,7 @@ public final class OrganizationCommands {
 	private static int infoOrg(CommandSourceStack source, UUID orgId) {
 		return OrganizationService.getOrganization(source.getServer(), orgId)
 				.map(record -> {
-					source.sendSuccess(() -> Component.literal("Organization{name=" + record.name()
-							+ ", territory=" + EntityDisplayNames.resolveTerritoryName(source.getServer(), record.id())
-							+ ", id=" + record.id() + ", owner=" + record.owner()
-							+ ", members=" + record.members() + "}"), false);
+					source.sendSuccess(() -> OrganizationService.describeOrganizationPublic(source.getServer(), record), false);
 					return 1;
 				})
 				.orElseGet(() -> {

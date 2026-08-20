@@ -13,7 +13,6 @@ import net.minecraft.server.level.ServerPlayer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import luowei.player_block_status.lib.api.PlayerBlockStatusLib;
 import luowei.player_block_status.lib.api.StructureTerritoryContributor;
 import luowei.player_block_status.lib.chunk.TerritoryAttachments;
 import luowei.player_block_status.lib.chunk.TerritoryConfigFile;
@@ -21,7 +20,6 @@ import luowei.player_block_status.lib.event.TerritoryEnterMessagePrefs;
 import luowei.player_block_status.lib.event.TerritoryEventHandler;
 import luowei.player_block_status.lib.net.TerritoryEnterPrefsPayload;
 import luowei.player_block_status.lib.org.EntityDisplayNames;
-import luowei.player_block_status.lib.org.InternalOrganizationProvider;
 import luowei.player_block_status.lib.org.OrganizationData;
 import luowei.player_block_status.lib.org.OrganizationService;
 import luowei.player_block_status.lib.structure.StructureTerritoryRegistry;
@@ -39,9 +37,8 @@ public class PlayerBlockStatus implements ModInitializer {
 		loadStructureTerritoryContributors();
 		TerritoryEventHandler.register();
 		ServerLifecycleEvents.SERVER_STARTED.register(server -> {
-			PlayerBlockStatusLib.setOrganizationProvider(InternalOrganizationProvider.INSTANCE);
 			OrganizationData.get(server).reconcilePollList();
-			LOGGER.info("Internal organization provider registered");
+			LOGGER.info("Organization provider chain ready (external empty + internal)");
 		});
 		ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
 			ServerPlayer player = handler.getPlayer();

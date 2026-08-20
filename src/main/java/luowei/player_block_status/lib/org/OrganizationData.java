@@ -146,7 +146,54 @@ public class OrganizationData extends SavedData {
 		}
 		record.addMember(playerId);
 		playerToOrg.put(playerId, orgId);
+		clearInvitesFor(playerId);
 		setDirty();
+	}
+
+	public void addInvite(UUID orgId, UUID playerId) {
+		OrganizationRecord record = organizations.get(orgId);
+		if (record == null) {
+			throw new IllegalArgumentException("Organization not found: " + orgId);
+		}
+		clearInvitesFor(playerId);
+		record.addInvite(playerId);
+		setDirty();
+	}
+
+	public void removeInvite(UUID orgId, UUID playerId) {
+		OrganizationRecord record = organizations.get(orgId);
+		if (record == null) {
+			return;
+		}
+		record.removeInvite(playerId);
+		setDirty();
+	}
+
+	public Optional<UUID> findInviteFor(UUID playerId) {
+		for (OrganizationRecord record : organizations.values()) {
+			if (record.hasInvite(playerId)) {
+				return Optional.of(record.id());
+			}
+		}
+		return Optional.empty();
+	}
+
+	public void setOwner(UUID orgId, UUID newOwnerId) {
+		OrganizationRecord record = organizations.get(orgId);
+		if (record == null) {
+			throw new IllegalArgumentException("Organization not found: " + orgId);
+		}
+		if (!record.isMember(newOwnerId)) {
+			throw new IllegalArgumentException("New owner must already be a member");
+		}
+		record.setOwner(newOwnerId);
+		setDirty();
+	}
+
+	private void clearInvitesFor(UUID playerId) {
+		for (OrganizationRecord record : organizations.values()) {
+			record.removeInvite(playerId);
+		}
 	}
 
 	/**
@@ -182,6 +229,11 @@ public class OrganizationData extends SavedData {
 		for (UUID member : from.members()) {
 			to.addMember(member);
 			playerToOrg.put(member, toOrgId);
+		}
+		for (UUID invited : from.pendingInvites()) {
+			if (!to.isMember(invited) && playerToOrg.get(invited) == null) {
+				to.addInvite(invited);
+			}
 		}
 		setDirty();
 	}

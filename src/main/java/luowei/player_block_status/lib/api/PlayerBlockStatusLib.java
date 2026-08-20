@@ -16,6 +16,8 @@ import net.minecraft.world.level.ChunkPos;
 import luowei.player_block_status.lib.chunk.ChunkState;
 import luowei.player_block_status.lib.chunk.RegionManager;
 import luowei.player_block_status.lib.chunk.StructureBounds;
+import luowei.player_block_status.lib.compat.ExternalOrganizationBridge;
+import luowei.player_block_status.lib.org.CompositeOrganizationProvider;
 import luowei.player_block_status.lib.org.EntityDisplayNames;
 import luowei.player_block_status.lib.org.EntityPollList;
 import luowei.player_block_status.lib.org.OrganizationService;
@@ -28,13 +30,17 @@ import luowei.player_block_status.lib.structure.StructureTerritoryRegistry;
  * 强制改写区块、导出调试地图不在本类；请用 OP 指令 {@code /pbs set}、{@code /pbs refresh}、{@code /pbs map}。
  */
 public final class PlayerBlockStatusLib {
-	private static OrganizationProvider organizationProvider = OrganizationProvider.NONE;
+	private static OrganizationProvider organizationProvider = CompositeOrganizationProvider.INSTANCE;
 	private static SafeBiomeChecker safeBiomeChecker = SafeBiomeChecker.NONE;
 	private static final List<EntityPollListListener> ENTITY_POLL_LIST_LISTENERS = new CopyOnWriteArrayList<>();
 
 	private PlayerBlockStatusLib() {
 	}
 
+	/**
+	 * 替换整条账户解析链。若只要加外部层、保留内置回退，请用
+	 * {@link ExternalOrganizationBridge#set}，不要在此盖掉组合 Provider。
+	 */
 	public static void setOrganizationProvider(OrganizationProvider provider) {
 		organizationProvider = provider == null ? OrganizationProvider.NONE : provider;
 	}
@@ -194,7 +200,7 @@ public final class PlayerBlockStatusLib {
 	}
 
 	public static Optional<UUID> queryPlayerOrganization(MinecraftServer server, UUID playerId) {
-		return OrganizationService.getOrganizationId(server, playerId);
+		return getOrganizationProvider().getOrganizationId(server, playerId);
 	}
 
 	public static Optional<luowei.player_block_status.lib.org.OrganizationRecord> queryOrganization(
