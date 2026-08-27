@@ -16,6 +16,9 @@ import luowei.player_block_status.lib.structure.StructureGenerationHooks;
 /**
  * 结构 placeInChunk 捕获窗口内的底层放块钩子。
  * <p>
+ * 暂时去掉：未在 {@code player-block-status.mixins.json} 注册；ProtoChunk/LevelChunk 捕获热路径
+ * 改由 {@link WorldGenRegionMixin} 承担。保留本类便于日后重新启用。
+ * <p>
  * 不能注入抽象的 {@link net.minecraft.world.level.chunk.ChunkAccess#setBlockState}：
  * 无方法体则 {@code @At("RETURN")} 会 Scanned 0 并导致启动崩溃。
  * 因此挂在有实现的 {@link ProtoChunk}（世界生成主路径）与 {@link LevelChunk}

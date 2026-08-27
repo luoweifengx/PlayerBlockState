@@ -93,6 +93,9 @@ public final class ChunkStateMachine {
 					}
 					long neighborKey = ChunkPos.asLong(borderPos.x + dx, borderPos.z + dz);
 					ChunkState neighborState = resolveState(neighborKey, states, contextChunks);
+					if (neighborState == ChunkState.DEMON) {
+						continue;
+					}
 					if (neighborState == null || neighborState == ChunkState.NATURAL) {
 						states.put(neighborKey, ChunkState.HOSTILE_BORDER);
 					}
@@ -134,6 +137,10 @@ public final class ChunkStateMachine {
 			ChunkState previous,
 			boolean safeChunk
 	) {
+		if (previous == ChunkState.DEMON) {
+			return ChunkState.DEMON;
+		}
+
 		if (safeChunk) {
 			if (hasDeathScore(chunk)) {
 				return ChunkState.DEATH;
@@ -213,7 +220,12 @@ public final class ChunkStateMachine {
 			}
 			ChunkState next = entry.getValue();
 			if (next == ChunkState.HOSTILE_BORDER
-					&& (chunk.getState() == ChunkState.OCCUPIED || chunk.getState() == ChunkState.BORDER)) {
+					&& (chunk.getState() == ChunkState.OCCUPIED
+					|| chunk.getState() == ChunkState.BORDER
+					|| chunk.getState() == ChunkState.DEMON)) {
+				continue;
+			}
+			if (chunk.getState() == ChunkState.DEMON && next != ChunkState.DEMON) {
 				continue;
 			}
 			chunk.setState(next);

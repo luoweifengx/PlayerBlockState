@@ -1,0 +1,10 @@
+{
+	"advancement.player-block-status.root.title": "Chunk Territory",
+	"advancement.player-block-status.root.description": "Build, stay, and claim",
+	"advancement.player-block-status.home.title": "This Place Is Home",
+	"advancement.player-block-status.home.description": "Claimed your first chunk",
+	"advancement.player-block-status.nether_souls.title": "The Ancient Dark Soul Is Released",
+	"advancement.player-block-status.nether_souls.description": "The first nether portal in this world has opened",
+	"advancement.player-block-status.beacon_end.title": "Ended Forever",
+	"advancement.player-block-status.beacon_end.description": "A level 3 beacon was activated for the first time"
+}

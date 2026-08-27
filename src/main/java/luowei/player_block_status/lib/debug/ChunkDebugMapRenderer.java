@@ -302,6 +302,7 @@ public final class ChunkDebugMapRenderer {
 			case HOSTILE_BORDER -> new Color(220, 20, 60);
 			case SAFE -> new Color(169, 169, 169);
 			case DEATH -> new Color(128, 0, 128);
+			case DEMON -> new Color(74, 14, 78);
 		};
 	}
 
@@ -314,6 +315,7 @@ public final class ChunkDebugMapRenderer {
 				  HOSTILE_BORDER (4) - Red     #DC143C
 				  SAFE (5)           - Gray    #A9A9A9
 				  DEATH (6)          - Purple  #800080
+				  DEMON (7)          - Indigo  #4A0E4E
 				""";
 	}
 
@@ -398,6 +400,9 @@ public final class ChunkDebugMapRenderer {
 	private static Color colorForOwnerCell(ChunkMapCell cell, Map<UUID, Color> ownerColors) {
 		if (cell.state() == ChunkState.DEATH) {
 			return OWNER_DEATH;
+		}
+		if (cell.state() == ChunkState.DEMON) {
+			return colorForState(ChunkState.DEMON);
 		}
 		UUID owner = territoryOwner(cell);
 		if (owner == null) {

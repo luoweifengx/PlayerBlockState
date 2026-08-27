@@ -15,7 +15,9 @@ public enum ChunkState {
 	/** 安全区块：仅因死亡或群系/地势变更而转变 */
 	SAFE(5),
 	/** 死亡状态：分数低于死亡阈值 */
-	DEATH(6);
+	DEATH(6),
+	/** 恶魔区块：传送门激活生成，可日更扩散；不可被其它状态覆盖，可强制覆盖其它状态 */
+	DEMON(7);
 
 	private final int id;
 
@@ -42,5 +44,17 @@ public enum ChunkState {
 
 	public boolean isNaturalFamily() {
 		return this == NATURAL || this == HOSTILE_BORDER;
+	}
+
+	public boolean isDemon() {
+		return this == DEMON;
+	}
+
+	/** 其它区块类型不能覆盖恶魔区块；恶魔区块可以覆盖任意类型。 */
+	public boolean canBeReplacedBy(ChunkState incoming) {
+		if (this == DEMON) {
+			return incoming == DEMON;
+		}
+		return true;
 	}
 }

@@ -22,7 +22,7 @@ public final class TerritoryConfig {
 	public static int naturalReturnThreshold = 500;
 	public static int deathThreshold = -100;
 	/** 每放置方块得分 */
-	public static int blockScorePerBlock = 300;
+	public static int blockScorePerBlock = 500;
 	public static int stayScorePerInterval = 3;
 	public static int stayTickInterval = 100;
 	public static int deathPenalty = -50;
@@ -35,8 +35,8 @@ public final class TerritoryConfig {
 	public static int hostileBorderExtensionChunks = 2;
 	/** 世界日时间（0-24000）触发每日刷新的时刻 */
 	public static int dailyRefreshTime = 0;
-	/** 结构 sentinel 链式认领每 tick 最多改写的方块数 */
-	public static int structureClaimBlocksPerTick = 512;
+	/** 结构 sentinel 刷写与链式认领每 tick 最多改写的方块数（配置项 `structureClaimBlocksPerTick`） */
+	public static int structureClaimBlocksPerTick = 32386;
 	/** 进入自己的领地时的默认提示（可被客户端配置 / {@code /pbs territory backmine} 覆盖） */
 	public static final String DEFAULT_OWN_TERRITORY_ENTER_MESSAGE = "自己的领地";
 	public static String ownTerritoryEnterMessage = DEFAULT_OWN_TERRITORY_ENTER_MESSAGE;
@@ -44,6 +44,10 @@ public final class TerritoryConfig {
 	public static String enterMessageInfoType = "sight of me";
 	/** 进入新所属领地时是否向玩家显示地区名 */
 	public static boolean showTerritoryEnterMessage = true;
+	/** 恶魔区块默认日更扩散进入概率（先掷骰，再随机挑一个四邻） */
+	public static final double DEMON_SPREAD_PROBABILITY_DEFAULT = 0.01;
+	/** 1 级供奉信标生效时的扩散进入概率 */
+	public static final double DEMON_SPREAD_PROBABILITY_LEVEL1 = 0.001;
 
 	private TerritoryConfig() {
 	}

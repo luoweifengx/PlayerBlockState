@@ -1,0 +1,23 @@
+{
+	"parent": "player-block-status:root",
+	"display": {
+		"icon": {
+			"id": "minecraft:obsidian"
+		},
+		"title": {
+			"translate": "advancement.player-block-status.nether_souls.title"
+		},
+		"description": {
+			"translate": "advancement.player-block-status.nether_souls.description"
+		},
+		"frame": "goal",
+		"show_toast": true,
+		"announce_to_chat": true,
+		"hidden": false
+	},
+	"criteria": {
+		"granted": {
+			"trigger": "minecraft:impossible"
+		}
+	}
+}

@@ -11,9 +11,12 @@ import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.profiling.Profiler;
+import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.level.Level;
 
 import luowei.player_block_status.PlayerBlockStatus;
+import luowei.player_block_status.lib.debug.TerritoryPerf;
 
 /**
  * 结构链式认领：玩家放置后，对六邻中 {@link TerritoryConfig#STRUCTURE_BLOCK_SENTINEL} 方块做分 tick BFS，
@@ -65,45 +68,57 @@ public final class StructureClaimProcessor {
 	}
 
 	public static void tick(ServerLevel level) {
-		Deque<ClaimJob> jobs = JOBS_BY_DIMENSION.get(level.dimension());
-		if (jobs == null || jobs.isEmpty()) {
-			return;
-		}
-
-		WorldRegionData data = WorldRegionData.get(level);
-		int budget = TerritoryConfig.structureClaimBlocksPerTick;
-
-		while (budget > 0 && !jobs.isEmpty()) {
-			ClaimJob job = jobs.peekFirst();
-			if (job == null) {
-				jobs.pollFirst();
-				continue;
+		ProfilerFiller profiler = Profiler.get();
+		profiler.push(TerritoryPerf.STRUCTURE_CLAIM);
+		long t0 = System.nanoTime();
+		int claimed = 0;
+		int jobsRemaining = 0;
+		try {
+			Deque<ClaimJob> jobs = JOBS_BY_DIMENSION.get(level.dimension());
+			if (jobs == null || jobs.isEmpty()) {
+				return;
 			}
 
-			BlockPos pos = job.queue.pollFirst();
-			if (pos == null) {
-				jobs.pollFirst();
-				PlayerBlockStatus.LOGGER.debug(
-						"[pbs claim] completed owner={} claimed={} seed={}",
-						job.owner,
-						job.claimedCount,
-						job.seed
-				);
-				continue;
-			}
+			WorldRegionData data = WorldRegionData.get(level);
+			int budget = TerritoryConfig.structureClaimBlocksPerTick;
 
-			budget--;
-			if (!job.claimSentinel(data, pos)) {
-				continue;
-			}
+			while (budget > 0 && !jobs.isEmpty()) {
+				ClaimJob job = jobs.peekFirst();
+				if (job == null) {
+					jobs.pollFirst();
+					continue;
+				}
 
-			for (BlockPos offset : NEIGHBOR_OFFSETS) {
-				BlockPos neighbor = pos.offset(offset);
-				if (job.visited.add(neighbor.asLong())) {
-					job.queue.addLast(neighbor);
+				BlockPos pos = job.queue.pollFirst();
+				if (pos == null) {
+					jobs.pollFirst();
+					PlayerBlockStatus.LOGGER.debug(
+							"[pbs claim] completed owner={} claimed={} seed={}",
+							job.owner,
+							job.claimedCount,
+							job.seed
+					);
+					continue;
+				}
+
+				budget--;
+				if (!job.claimSentinel(data, pos)) {
+					continue;
+				}
+
+				claimed++;
+				for (BlockPos offset : NEIGHBOR_OFFSETS) {
+					BlockPos neighbor = pos.offset(offset);
+					if (job.visited.add(neighbor.asLong())) {
+						job.queue.addLast(neighbor);
+					}
 				}
 			}
+			jobsRemaining = jobs.size();
+		} finally {
+			profiler.pop();
 		}
+		TerritoryPerf.logStructureClaim(claimed, jobsRemaining, System.nanoTime() - t0);
 	}
 
 	private static final class ClaimJob {

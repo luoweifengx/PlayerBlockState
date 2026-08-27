@@ -1,6 +1,8 @@
 package luowei.player_block_status.lib.chunk;
 
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -16,6 +18,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
 
 import luowei.player_block_status.PlayerBlockStatus;
+import luowei.player_block_status.lib.advancement.TerritoryAdvancements;
 import luowei.player_block_status.lib.api.OrganizationProvider;
 import luowei.player_block_status.lib.api.SafeBiomeChecker;
 
@@ -52,6 +55,7 @@ public final class TerritoryDailyProcessor {
 						level.dimension().location(),
 						currentDay
 				);
+				DemonChunks.spreadForDay(level);
 			}
 			return;
 		}
@@ -101,10 +105,11 @@ public final class TerritoryDailyProcessor {
 		Map<Long, Integer> epochSnapshot = data.snapshotDirtyEpochs(dirtyKeys);
 
 		PlayerBlockStatus.LOGGER.info(
-				"[pbs daily] scheduling async recompute for {} on day {} (dirtyChunks={})",
+				"[pbs daily] scheduling async recompute for {} on day {} (dirtyChunks={}): {}",
 				level.dimension().location(),
 				currentDay,
-				dirtyKeys.size()
+				dirtyKeys.size(),
+				formatChunkKeys(dirtyKeys)
 		);
 
 		Map<Long, ChunkStateMachine.NeighborChunkView> neighborContext = buildNeighborContext(data, dirtyKeys);
@@ -218,9 +223,9 @@ public final class TerritoryDailyProcessor {
 							snapshot.scoreModifiers(),
 							orgProvider
 					);
-					PlayerBlockStatus.LOGGER.debug(
-							"[pbs daily][{}] score compute: placedBlocks={}, stayScores={}, modifiers={}, blockScorePerBlock={}, totals={}",
-							chunkPos,
+					PlayerBlockStatus.LOGGER.info(
+							"[pbs daily][{}] score compute: placedBlocks={} stayScores={} modifiers={} blockScorePerBlock={} totals={}",
+							formatChunk(chunkPos),
 							snapshot.placedBlocks().size(),
 							snapshot.stayScores(),
 							snapshot.scoreModifiers(),
@@ -238,12 +243,17 @@ public final class TerritoryDailyProcessor {
 		Map<Long, UUID> occupyingOrgs = new HashMap<>();
 
 		for (DailyChunkSnapshot snapshot : computedSnapshots) {
+			if (snapshot.previousState() == ChunkState.DEMON) {
+				baseStates.put(snapshot.chunkKey(), ChunkState.DEMON);
+				occupyingOrgs.put(snapshot.chunkKey(), snapshot.occupyingOrg());
+				continue;
+			}
 			BaseStateResult base = ChunkStateMachine.computeBaseStateFromSnapshot(snapshot);
 			baseStates.put(snapshot.chunkKey(), base.state());
 			occupyingOrgs.put(snapshot.chunkKey(), base.occupyingOrg());
-			PlayerBlockStatus.LOGGER.debug(
-					"[pbs daily][{}] base state: {} -> {}, org={}, threshold={}",
-					new ChunkPos(snapshot.chunkKey()),
+			PlayerBlockStatus.LOGGER.info(
+					"[pbs daily][{}] base state: {} -> {} org={} threshold={}",
+					formatChunk(new ChunkPos(snapshot.chunkKey())),
 					snapshot.previousState(),
 					base.state(),
 					base.occupyingOrg(),
@@ -295,6 +305,10 @@ public final class TerritoryDailyProcessor {
 					chunk.getScoreModifiers().putAll(snapshot.scoreModifiers());
 					chunk.getCachedScores().clear();
 					chunk.getCachedScores().putAll(snapshot.cachedScores());
+					if (previousState == ChunkState.DEMON && finalState != ChunkState.DEMON) {
+						finalState = ChunkState.DEMON;
+						occupyingOrg = chunk.getOccupyingOrg();
+					}
 					chunk.setState(finalState);
 					// OCCUPIED 与 BORDER 均保留基础态归属；其它状态按计算结果写入（可为 null）
 					chunk.setOccupyingOrg(occupyingOrg);
@@ -304,24 +318,33 @@ public final class TerritoryDailyProcessor {
 					if (previousState != finalState) {
 						stateChangedKeys.add(chunkKey);
 					}
-					PlayerBlockStatus.LOGGER.debug(
-							"[pbs daily][{}] applied: state={}, org={}, cachedScores={}",
-							new ChunkPos(chunkKey),
+					PlayerBlockStatus.LOGGER.info(
+							"[pbs daily][{}] applied: {} -> {} changed={} org={} placedBlocks={} stay={} modifiers={} scores={}",
+							formatChunk(new ChunkPos(chunkKey)),
+							previousState,
 							finalState,
+							previousState != finalState,
 							occupyingOrg,
+							snapshot.placedBlocks().size(),
+							snapshot.stayScores(),
+							snapshot.scoreModifiers(),
 							snapshot.cachedScores()
 					);
 					continue;
 				}
 
 				if (finalState == ChunkState.HOSTILE_BORDER) {
-					// 无 snapshot 的 HOSTILE：写前再确认当前不是 OCCUPIED/BORDER
+					// 无 snapshot 的 HOSTILE：写前再确认当前不是 OCCUPIED/BORDER/DEMON
 					if (chunk != null
-							&& (chunk.getState() == ChunkState.OCCUPIED || chunk.getState() == ChunkState.BORDER)) {
+							&& (chunk.getState() == ChunkState.OCCUPIED
+							|| chunk.getState() == ChunkState.BORDER
+							|| chunk.getState() == ChunkState.DEMON)) {
 						continue;
 					}
 					chunk = data.getOrCreateChunk(chunkKey);
-					if (chunk.getState() == ChunkState.OCCUPIED || chunk.getState() == ChunkState.BORDER) {
+					if (chunk.getState() == ChunkState.OCCUPIED
+							|| chunk.getState() == ChunkState.BORDER
+							|| chunk.getState() == ChunkState.DEMON) {
 						continue;
 					}
 					ChunkState previousState = chunk.getState();
@@ -334,6 +357,12 @@ public final class TerritoryDailyProcessor {
 					if (previousState != ChunkState.HOSTILE_BORDER) {
 						stateChangedKeys.add(chunkKey);
 					}
+					PlayerBlockStatus.LOGGER.info(
+							"[pbs daily][{}] applied derived HOSTILE_BORDER: {} -> HOSTILE_BORDER changed={}",
+							formatChunk(new ChunkPos(chunkKey)),
+							previousState,
+							previousState != ChunkState.HOSTILE_BORDER
+					);
 					continue;
 				}
 
@@ -346,15 +375,26 @@ public final class TerritoryDailyProcessor {
 
 			data.clearRecomputedDirtyKeys(epochSnapshot);
 			data.finishDailyRefresh(currentDay);
+			DemonChunks.spreadForDay(level);
 
 			PlayerBlockStatus.LOGGER.info(
-					"[pbs daily] completed for {} (day={}, dirtyChunks={}, stateUpdates={}, lastDailyDay={})",
+					"[pbs daily] completed for {} (day={}, dirtyChunks={}, recomputed={}, stateChanged={}, lastDailyDay={})",
 					level.dimension().location(),
 					currentDay,
 					epochSnapshot.size(),
-					result.finalStates().size(),
+					result.snapshots().size(),
+					stateChangedKeys.size(),
 					data.getLastDailyDay()
 			);
+			PlayerBlockStatus.LOGGER.info(
+					"[pbs daily] recomputed chunks: {}",
+					formatChunkKeys(result.snapshots().keySet())
+			);
+			PlayerBlockStatus.LOGGER.info(
+					"[pbs daily] state changed chunks: {}",
+					formatChunkKeys(stateChangedKeys)
+			);
+			TerritoryAdvancements.checkHomeForOnlinePlayers(level.getServer());
 		} catch (Exception exception) {
 			data.cancelDailyRefreshInProgress();
 			PlayerBlockStatus.LOGGER.error("Daily territory refresh failed for {}", level.dimension().location(), exception);
@@ -396,6 +436,9 @@ public final class TerritoryDailyProcessor {
 				}
 
 				ChunkState state = chunk.getState();
+				if (state == ChunkState.DEMON) {
+					continue;
+				}
 				if (state == ChunkState.NATURAL) {
 					if (!ChunkStateMachine.hasBorderWithinChebyshev(resolver, chunkKey, extension)) {
 						continue;
@@ -406,9 +449,10 @@ public final class TerritoryDailyProcessor {
 					data.persistChunkChange(chunkKey, chunk);
 					index.replaceChunk(chunkKey, ChunkState.HOSTILE_BORDER, null);
 					corrected.add(chunkKey);
-					PlayerBlockStatus.LOGGER.debug(
+					seedChangedKeys.add(chunkKey);
+					PlayerBlockStatus.LOGGER.info(
 							"[pbs daily][{}] neighborhood fix: NATURAL -> HOSTILE_BORDER (border within chebyshev {})",
-							new ChunkPos(chunkKey),
+							formatChunk(new ChunkPos(chunkKey)),
 							extension
 					);
 				} else if (state == ChunkState.BORDER) {
@@ -420,9 +464,10 @@ public final class TerritoryDailyProcessor {
 					data.persistChunkChange(chunkKey, chunk);
 					index.replaceChunk(chunkKey, ChunkState.OCCUPIED, org);
 					corrected.add(chunkKey);
-					PlayerBlockStatus.LOGGER.debug(
+					seedChangedKeys.add(chunkKey);
+					PlayerBlockStatus.LOGGER.info(
 							"[pbs daily][{}] neighborhood fix: BORDER -> OCCUPIED (all cardinal own occupied family)",
-							new ChunkPos(chunkKey)
+							formatChunk(new ChunkPos(chunkKey))
 					);
 				}
 			}
@@ -453,6 +498,21 @@ public final class TerritoryDailyProcessor {
 			}
 		}
 		return true;
+	}
+
+	private static String formatChunk(ChunkPos pos) {
+		return "[" + pos.x + ", " + pos.z + "]";
+	}
+
+	private static String formatChunkKeys(Collection<Long> keys) {
+		if (keys == null || keys.isEmpty()) {
+			return "(none)";
+		}
+		return keys.stream()
+				.map(ChunkPos::new)
+				.sorted(Comparator.comparingInt((ChunkPos pos) -> pos.x).thenComparingInt(pos -> pos.z))
+				.map(TerritoryDailyProcessor::formatChunk)
+				.collect(Collectors.joining(", "));
 	}
 
 	record DailyChunkSnapshot(

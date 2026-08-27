@@ -1,0 +1,82 @@
+date: 2026-08-20
+command: .\gradlew.bat test
+result: SUCCESS
+gradle_build_time: 17s
+junit_duration: 11.277s
+classes: 6
+tests: 48
+failures: 0
+errors: 0
+skipped: 0
+failed_tests: none
+html_report: build/reports/tests/test/index.html
+mod_version: 0.2.5
+
+added_this_round:
+  - luowei.player_block_status.lib.chunk.ChunkTerritoryDataTest
+  - luowei.player_block_status.lib.chunk.EntityChunkIndexTest
+  - luowei.player_block_status.lib.org.EntityPollListTest
+
+# 计分 / 状态机
+ChunkScoreEngineTest: 4 tests, 0 failed, 0.089s
+  nPlayerBlocksScoreNTimesBlockScorePerBlock
+  structureSentinelBlocksDoNotScore
+  stayScoresAndDeathModifiersMergeIntoTotal
+  organizationProviderIsIgnoredForScoreKeys
+
+ChunkStateMachineTest: 13 tests, 0 failed, 0.020s
+  naturalJustBelowOccupationThresholdStaysNatural
+  naturalAtOccupationThresholdBecomesOccupied
+  occupiedAllBelowNaturalReturnBecomesNaturalAndClearsOrg
+  occupiedSomeoneAtNaturalReturnStaysOccupied
+  borderAllBelowNaturalReturnBecomesNatural
+  hostileBorderBelowOccupationKeepsHostileBorder
+  occupiedTakeoverJustBelowMultiplierFails
+  occupiedTakeoverAtMultiplierChangesOwner
+  borderTakeoverJustBelowMultiplierFails
+  borderTakeoverAtMultiplierChangesOwner
+  safeChunkWithoutDeathScoreIsSafe
+  safeChunkWithDeathScoreIsDeath
+  deathScoreTakesPriorityOverOccupation
+
+ChunkStateMachineBorderTest: 4 tests, 0 failed, 8.925s (includes Minecraft registry bootstrap, no game window)
+  interiorOccupiedSurroundedByOwnOccupiedStaysOccupied
+  occupiedEdgeAdjacentToNonOwnBecomesBorder
+  naturalWithinChebyshevTwoOfBorderBecomesHostileBorder
+  hostileBorderDoesNotOverwriteForeignOccupiedOrBorder
+
+# 领土数据
+ChunkTerritoryDataTest: 11 tests, 0 failed, 0.013s (NEW; BlockPos pack/unpack bootstraps registries, no game window)
+  remapEntityMergesMapsAndRewritesOccupyingOrg
+  remapEntityLeavesOccupyingOrgUnchangedWhenNotFrom
+  clearStayScoresEmptiesOnlyStayMap
+  applyDeathRecoveryAddsPerDayWhenStateIsDeath
+  applyDeathRecoveryDoesNotChangeNonDeathStates
+  packLocalPosAndUnpackGlobalPosRoundTrip
+  packLocalPosAndUnpackGlobalPosRoundTripNegativeY
+  hasTerritoryDataFalseWhenEmpty
+  hasTerritoryDataTrueWhenPlacedBlocksPresent
+  hasTerritoryDataTrueWhenAnyScoreMapPresent
+  hasTerritoryDataTrueWhenNonNaturalOrOccupyingOrg
+
+# 索引
+EntityChunkIndexTest: 8 tests, 0 failed, 0.016s (NEW; pure Java, no bootstrap)
+  transferPlayerToOrgMergesOccupiedAndBorderThenDropsPlayer
+  mergeOrganizationMovesFromIntoToThenDropsFrom
+  replaceChunkOccupiedGoesToOccupiedTable
+  replaceChunkBorderGoesToBorderTable
+  replaceChunkNaturalRemovesFromBothTables
+  replaceChunkNullOccupyingOrgRemovesFromBothTables
+  getOwnedChunksIsOccupiedUnionBorder
+  rebuildFromMatchesReplaceChunk
+
+# 轮询列表
+EntityPollListTest: 8 tests, 0 failed, 0.030s (NEW; constructed with new EntityPollList(() -> {}))
+  onOrganizationCreatedRemovesMembersAndAppendsOrg
+  onPlayerJoinedOrganizationRemovesOnlyThatPlayer
+  onPlayerLeftOrganizationKeepsOrgAndAppendsPlayerWhenNotDissolved
+  onPlayerLeftOrganizationRemovesOrgAndAppendsPlayerWhenDissolved
+  onOrganizationsMergedRemovesFromAndKeepsToInPlace
+  onOrganizationsMergedAppendsToWhenMissing
+  reconcileAppendsMissingOrgsAndDropsPlayersAlreadyInOrgs
+  indexOfStaysCorrectAfterRemovingMiddleEntry

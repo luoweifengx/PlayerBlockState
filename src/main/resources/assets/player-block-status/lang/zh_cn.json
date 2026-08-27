@@ -1,0 +1,10 @@
+{
+	"advancement.player-block-status.root.title": "区块领地",
+	"advancement.player-block-status.root.description": "建设、停留与归属",
+	"advancement.player-block-status.home.title": "此地已成家园",
+	"advancement.player-block-status.home.description": "拥有了第一块领地",
+	"advancement.player-block-status.nether_souls.title": "古老的黑暗之魂已释放",
+	"advancement.player-block-status.nether_souls.description": "全服第一次点亮了地狱传送门",
+	"advancement.player-block-status.beacon_end.title": "永远终结了",
+	"advancement.player-block-status.beacon_end.description": "第一次激活了三级信标"
+}

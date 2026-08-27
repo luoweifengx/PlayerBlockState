@@ -11,12 +11,14 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.ChunkPos;
 
 import luowei.player_block_status.lib.chunk.ChunkState;
+import luowei.player_block_status.lib.chunk.DemonChunkWorldData;
 import luowei.player_block_status.lib.chunk.WorldRegionData;
 
 /**
@@ -104,6 +106,19 @@ public final class TerritoryQueries {
 	}
 
 	/**
+	 * 查询实体（组织或未入组织玩家）当前持有的占领 / 边界 / 合计区块数。
+	 * 计数随倒排索引增删同步维护，不拷贝区块集合。
+	 */
+	public static EntityTerritoryCounts queryEntityTerritoryCounts(ServerLevel level, UUID entityId) {
+		var index = WorldRegionData.get(level).getEntityChunkIndex();
+		return new EntityTerritoryCounts(
+				index.getOccupiedCount(entityId),
+				index.getBorderCount(entityId),
+				index.getOwnedCount(entityId)
+		);
+	}
+
+	/**
 	 * 根据实体（组织或未入组织玩家）所属 OCCUPIED ∪ BORDER 计算平均中心区块。
 	 * <p>
 	 * 对所有所属 {@link ChunkPos} 的 x/z 分别求和再除以数量；若平均值落在相邻区块交界
@@ -128,10 +143,20 @@ public final class TerritoryQueries {
 		return Optional.of(new TerritoryCentroid(center, count));
 	}
 
+	/** 本维度当前恶魔区块列表，按 x 再 z 排序。 */
+	public static List<ChunkPos> queryDemonChunks(ServerLevel level) {
+		return toChunkPosList(WorldRegionData.get(level).getDemonChunkKeys());
+	}
+
+	/** 全服运作信标快照（主世界 SavedData）。 */
+	public static BeaconOfferingSnapshot queryBeaconOffering(MinecraftServer server) {
+		return DemonChunkWorldData.get(server).snapshot();
+	}
+
 	/**
 	 * 以中心与切比雪夫半径编码平面状态图。
 	 * 格式：{@code PBS1:<radius>:<centerX>:<centerZ>:<data>}，
-	 * {@code data} 长度 {@code (2r+1)^2}，行优先（dz 外、dx 内），每字符为状态 id（'1'..'6'）。
+	 * {@code data} 长度 {@code (2r+1)^2}，行优先（dz 外、dx 内），每字符为状态 id（'1'..'7'）。
 	 */
 	public static ChunkStateMapSnapshot encodeChunkStateMap(ServerLevel level, ChunkPos center, int radiusChunks) {
 		if (radiusChunks < 0) {
@@ -173,6 +198,10 @@ public final class TerritoryQueries {
 			}
 		}
 		return grid;
+	}
+
+	/** 实体领土规模：占领、边界与持有合计（OCCUPIED + BORDER）。 */
+	public record EntityTerritoryCounts(int occupied, int border, int owned) {
 	}
 
 	public record OrgTerritoryChunks(List<ChunkPos> occupied, List<ChunkPos> border) {

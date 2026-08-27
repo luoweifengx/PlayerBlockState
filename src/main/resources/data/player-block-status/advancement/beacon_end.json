@@ -1,0 +1,23 @@
+{
+	"parent": "player-block-status:root",
+	"display": {
+		"icon": {
+			"id": "minecraft:beacon"
+		},
+		"title": {
+			"translate": "advancement.player-block-status.beacon_end.title"
+		},
+		"description": {
+			"translate": "advancement.player-block-status.beacon_end.description"
+		},
+		"frame": "challenge",
+		"show_toast": true,
+		"announce_to_chat": true,
+		"hidden": false
+	},
+	"criteria": {
+		"granted": {
+			"trigger": "minecraft:impossible"
+		}
+	}
+}

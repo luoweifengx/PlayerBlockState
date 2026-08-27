@@ -36,7 +36,7 @@ public final class TerritoryConfigFile {
 					+ "occupationTakeoverMultiplier / borderTakeoverMultiplier: challenger vs current owner. "
 					+ "hostileBorderExtensionChunks: Chebyshev width beyond BORDER. "
 					+ "dailyRefreshTime: world day time 0-23999. "
-					+ "structureClaimBlocksPerTick: structure claim budget. "
+					+ "structureClaimBlocksPerTick: per-tick budget for sentinel flush and structure claim. "
 					+ "showTerritoryEnterMessage: master switch for action-bar enter text.";
 
 	private TerritoryConfigFile() {

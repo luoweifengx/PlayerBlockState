@@ -97,6 +97,47 @@ public final class WorldRegionData {
 		return dimensionData.getEntityChunkIndex();
 	}
 
+	public Set<Long> getDemonChunkKeys() {
+		return dimensionData.getDemonChunkKeys();
+	}
+
+	/**
+	 * 强制写成恶魔区块：覆盖任意现有类型，清空占领归属。
+	 */
+	public void convertToDemon(long chunkKey) {
+		ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
+		if (chunk.getState() == ChunkState.DEMON) {
+			syncDemonIndex(chunkKey, chunk);
+			return;
+		}
+		chunk.setState(ChunkState.DEMON);
+		chunk.setOccupyingOrg(null);
+		persistChunkChange(chunkKey, chunk);
+		getEntityChunkIndex().replaceChunk(chunkKey, ChunkState.DEMON, null);
+	}
+
+	/**
+	 * 将本维度全部恶魔区块退回自然并标脏，供下次日更按分数重算。
+	 */
+	public int clearAllDemonChunks() {
+		Set<Long> keys = new HashSet<>(dimensionData.getDemonChunkKeys());
+		int cleared = 0;
+		for (long chunkKey : keys) {
+			ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
+			if (chunk.getState() != ChunkState.DEMON) {
+				dimensionData.removeDemonChunk(chunkKey);
+				continue;
+			}
+			chunk.setState(ChunkState.NATURAL);
+			chunk.setOccupyingOrg(null);
+			persistChunkChange(chunkKey, chunk);
+			getEntityChunkIndex().replaceChunk(chunkKey, ChunkState.NATURAL, null);
+			markChunkDirty(chunkKey);
+			cleared++;
+		}
+		return cleared;
+	}
+
 	public void markChunkDirty(long chunkKey) {
 		if (dimensionData.markChunkDirty(chunkKey)) {
 			PlayerBlockStatus.LOGGER.debug(
@@ -194,10 +235,15 @@ public final class WorldRegionData {
 		persistChunkChange(chunkKey, chunk);
 		markChunkDirty(chunkKey);
 		StructureClaimProcessor.enqueue(level, pos, scoreEntity);
-		PlayerBlockStatus.LOGGER.debug(
-				"[pbs] block placed at {} in chunk {} by {} (placedCount={}, dirtyCount={})",
-				pos,
-				new ChunkPos(chunkKey),
+		ChunkPos chunkPos = new ChunkPos(chunkKey);
+		PlayerBlockStatus.LOGGER.info(
+				"[pbs] player placed block at ({}, {}, {}) chunk=[{}, {}] player={} scoreEntity={} placedCount={} dirtyCount={}",
+				pos.getX(),
+				pos.getY(),
+				pos.getZ(),
+				chunkPos.x,
+				chunkPos.z,
+				playerId,
 				scoreEntity,
 				chunk.getPlacedBlocks().size(),
 				dimensionData.getDirtyChunkKeys().size()
@@ -246,11 +292,16 @@ public final class WorldRegionData {
 		persistChunkChange(chunkKey, chunk);
 		maybeRemoveEmptyChunk(chunkKey, chunk);
 		markChunkDirty(chunkKey);
-		PlayerBlockStatus.LOGGER.debug(
-				"[pbs] tracked block removed at {} in chunk {} (placedCount={})",
-				pos,
-				new ChunkPos(chunkKey),
-				chunk.getPlacedBlocks().size()
+		ChunkPos chunkPos = new ChunkPos(chunkKey);
+		PlayerBlockStatus.LOGGER.info(
+				"[pbs] tracked block removed at ({}, {}, {}) chunk=[{}, {}] placedCount={} dirtyCount={}",
+				pos.getX(),
+				pos.getY(),
+				pos.getZ(),
+				chunkPos.x,
+				chunkPos.z,
+				chunk.getPlacedBlocks().size(),
+				dimensionData.getDirtyChunkKeys().size()
 		);
 	}
 
@@ -260,7 +311,6 @@ public final class WorldRegionData {
 		UUID scoreEntity = resolveScoreEntity(level, playerId, orgProvider);
 		chunk.accumulateStayScore(scoreEntity, TerritoryConfig.stayScorePerInterval);
 		persistChunkChange(chunkKey, chunk);
-		markChunkDirty(chunkKey);
 	}
 
 	public void onPlayerDeath(ServerLevel level, UUID playerId, ChunkPos chunkPos, OrganizationProvider orgProvider) {
@@ -321,12 +371,18 @@ public final class WorldRegionData {
 				if (!changeState && !changeOwner) {
 					continue;
 				}
+				if (currentState.isDemon() && (state == null || state != ChunkState.DEMON)) {
+					continue;
+				}
 
 				ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
 				if (changeState) {
 					chunk.setState(state);
+					if (state == ChunkState.DEMON) {
+						chunk.setOccupyingOrg(null);
+					}
 				}
-				if (changeOwner) {
+				if (changeOwner && state != ChunkState.DEMON && chunk.getState() != ChunkState.DEMON) {
 					chunk.setOccupyingOrg(owner);
 				}
 				persistChunkChange(chunkKey, chunk);
@@ -388,12 +444,21 @@ public final class WorldRegionData {
 		ChunkPos chunkPos = new ChunkPos(chunkKey);
 		if (chunk.hasTerritoryData()) {
 			trackActiveChunk(chunkKey);
+			syncDemonIndex(chunkKey, chunk);
 			ChunkTerritoryAccess.markDirty(level, chunkPos);
 			return;
 		}
 
 		ChunkTerritoryAccess.clearIfEmpty(level, chunkPos, chunk);
 		untrackActiveChunk(chunkKey);
+	}
+
+	private void syncDemonIndex(long chunkKey, ChunkTerritoryData chunk) {
+		if (chunk.getState() == ChunkState.DEMON) {
+			dimensionData.addDemonChunk(chunkKey);
+		} else {
+			dimensionData.removeDemonChunk(chunkKey);
+		}
 	}
 
 	private void trackActiveChunk(long chunkKey) {
@@ -406,6 +471,7 @@ public final class WorldRegionData {
 		if (dimensionData.getActiveChunkKeys().remove(chunkKey)) {
 			dimensionData.setDirty();
 		}
+		dimensionData.removeDemonChunk(chunkKey);
 		getEntityChunkIndex().replaceChunk(chunkKey, ChunkState.NATURAL, null);
 	}
 

@@ -23,10 +23,11 @@ import luowei.player_block_status.PlayerBlockStatus;
  * 捕获窗口由 {@link net.minecraft.world.level.levelgen.structure.StructureStart#placeInChunk} 的 begin/end 界定
  *（ThreadLocal {@link #isCapturingStructureBlocks()}）。窗口内钩子：
  * <ul>
- *   <li>主路径：{@link net.minecraft.world.level.chunk.ProtoChunk} /
+ *   <li>当前主路径：{@link net.minecraft.server.level.WorldGenRegion#setBlock}
+ *       （{@link luowei.player_block_status.mixin.WorldGenRegionMixin}）</li>
+ *   <li>暂时去掉：{@link net.minecraft.world.level.chunk.ProtoChunk} /
  *       {@link net.minecraft.world.level.chunk.LevelChunk}{@code #setBlockState}
- *       （不可注入抽象 {@link net.minecraft.world.level.chunk.ChunkAccess}）</li>
- *   <li>双保险：{@link net.minecraft.server.level.WorldGenRegion#setBlock}</li>
+ *       （{@link luowei.player_block_status.mixin.ChunkSetBlockStateMixin} 未注册）</li>
  * </ul>
  * 坐标以 {@link HashSet} 去重；仍不覆盖完全绕过上述写入的自定义路径。
  * <p>

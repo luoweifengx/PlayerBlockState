@@ -19,8 +19,26 @@ public final class RegionManager {
 	}
 
 	public static void onBlockPlaced(ServerLevel level, BlockPos pos, ServerPlayer player, OrganizationProvider orgProvider) {
-		WorldRegionData data = WorldRegionData.get(level);
-		data.onBlockPlaced(level, pos, player.getUUID(), orgProvider);
+		if (player == null) {
+			return;
+		}
+		onBlockPlaced(level, pos, player.getUUID(), orgProvider);
+	}
+
+	/**
+	 * 放置计分唯一出口：写入 {@code placed_blocks}（同一格覆盖归属，不叠分）。
+	 * Mixin 与 {@link luowei.player_block_status.lib.api.PlayerBlockStatusLib#notifyTrackedBlockPlaced}
+	 * 均汇入此处。仅服务端逻辑线程生效。
+	 * {@code ownerId} 为要归属的玩家 UUID；若该玩家在组织中，由 {@code orgProvider} 解析为组织 UUID。
+	 */
+	public static void onBlockPlaced(ServerLevel level, BlockPos pos, UUID ownerId, OrganizationProvider orgProvider) {
+		if (level == null || pos == null || ownerId == null) {
+			return;
+		}
+		if (!level.getServer().isSameThread()) {
+			return;
+		}
+		WorldRegionData.get(level).onBlockPlaced(level, pos, ownerId, orgProvider);
 	}
 
 	/**

@@ -24,7 +24,7 @@ import luowei.player_block_status.lib.org.OrganizationService;
 import luowei.player_block_status.lib.structure.StructureTerritoryRegistry;
 
 /**
- * 对外公开 API：注册回调、通知删分、只读查询区块。
+ * 对外公开 API：注册回调、通知放置/删分、只读查询区块。
  * <p>
  * 查询一律返回不可变视图，不暴露内部 {@code ChunkTerritoryData}。
  * 强制改写区块、导出调试地图不在本类；请用 OP 指令 {@code /pbs set}、{@code /pbs refresh}、{@code /pbs map}。
@@ -33,6 +33,7 @@ public final class PlayerBlockStatusLib {
 	private static OrganizationProvider organizationProvider = CompositeOrganizationProvider.INSTANCE;
 	private static SafeBiomeChecker safeBiomeChecker = SafeBiomeChecker.NONE;
 	private static final List<EntityPollListListener> ENTITY_POLL_LIST_LISTENERS = new CopyOnWriteArrayList<>();
+	private static final List<BeaconOfferingListener> BEACON_OFFERING_LISTENERS = new CopyOnWriteArrayList<>();
 
 	private PlayerBlockStatusLib() {
 	}
@@ -75,6 +76,30 @@ public final class PlayerBlockStatusLib {
 	public static void notifyEntityPollListListeners(EntityPollListChange change) {
 		for (EntityPollListListener listener : ENTITY_POLL_LIST_LISTENERS) {
 			listener.onEntityPollListChanged(change);
+		}
+	}
+
+	/**
+	 * 注册信标供奉变更钩子。内置恶魔区块效果也走此链。
+	 */
+	public static void addBeaconOfferingListener(BeaconOfferingListener listener) {
+		if (listener != null) {
+			BEACON_OFFERING_LISTENERS.add(listener);
+		}
+	}
+
+	public static void removeBeaconOfferingListener(BeaconOfferingListener listener) {
+		BEACON_OFFERING_LISTENERS.remove(listener);
+	}
+
+	/** 由信标追踪调用；消费模组请使用 {@link #addBeaconOfferingListener}。 */
+	public static void notifyBeaconOfferingListeners(
+			MinecraftServer server,
+			BeaconOfferingSnapshot previous,
+			BeaconOfferingSnapshot current
+	) {
+		for (BeaconOfferingListener listener : BEACON_OFFERING_LISTENERS) {
+			listener.onBeaconOfferingChanged(server, previous, current);
 		}
 	}
 
@@ -121,6 +146,25 @@ public final class PlayerBlockStatusLib {
 	 */
 	public static void notifyTrackedBlockRemoved(ServerLevel level, BlockPos pos) {
 		RegionManager.onBlockRemoved(level, pos);
+	}
+
+	/**
+	 * 通知领土系统：该格已由指定玩家放置，应记入 {@code placed_blocks}（同一格覆盖归属，不叠分）。
+	 * <p>
+	 * 给绕过原版玩家 {@link net.minecraft.world.item.BlockItem} 放置的外部模组
+	 * （例如 {@code level.setBlock}、村民代放、自定义放置逻辑），或需要把放置归属记到某玩家名下。
+	 * 玩家用手持方块物品放置时，由内部 mixin 自动通知，无需再调本方法。
+	 * 若 mixin 与本方法对同一格都触发，只会覆盖归属，不会叠分。
+	 * <p>
+	 * {@code ownerId} 是要归属的<strong>玩家 UUID</strong>（离线玩家亦可）。
+	 * 若该玩家当前在组织中，内部经 {@link OrganizationProvider} 解析为组织 UUID 再入账。
+	 * 若调用方传入的已是组织 UUID，且解析不到对应玩家组织，则原样作为计分账户保留。
+	 * <p>
+	 * 仅应在服务端逻辑线程调用。内部 mixin 与本方法均汇入
+	 * {@link RegionManager#onBlockPlaced}。
+	 */
+	public static void notifyTrackedBlockPlaced(ServerLevel level, BlockPos pos, UUID ownerId) {
+		RegionManager.onBlockPlaced(level, pos, ownerId, getOrganizationProvider());
 	}
 
 	/** 只读查询区块领土；无领土数据时 empty。 */
@@ -173,6 +217,17 @@ public final class PlayerBlockStatusLib {
 	}
 
 	/**
+	 * 查询实体（组织或未入组织玩家）的占领 / 边界 / 持有区块总数。
+	 * 随索引映射表新增或移除区块同步更新。
+	 */
+	public static TerritoryQueries.EntityTerritoryCounts queryEntityTerritoryCounts(
+			ServerLevel level,
+			UUID entityId
+	) {
+		return TerritoryQueries.queryEntityTerritoryCounts(level, entityId);
+	}
+
+	/**
 	 * 查询实体（组织或未入组织玩家）所属区块的平均中心 {@link ChunkPos} 与数量。
 	 * 平均值落在相邻区块交界时向上取整；若结果不在所属集合中则吸附到欧氏最近邻所属区块。
 	 * 无所属区块返回 empty。
@@ -182,6 +237,16 @@ public final class PlayerBlockStatusLib {
 			UUID entityId
 	) {
 		return TerritoryQueries.queryTerritoryCentroid(level, entityId);
+	}
+
+	/** 查询本维度当前全部恶魔区块。 */
+	public static List<ChunkPos> queryDemonChunks(ServerLevel level) {
+		return TerritoryQueries.queryDemonChunks(level);
+	}
+
+	/** 当前全服运作信标数量与最高等级（从主世界 SavedData 推导）。 */
+	public static BeaconOfferingSnapshot queryBeaconOffering(MinecraftServer server) {
+		return TerritoryQueries.queryBeaconOffering(server);
 	}
 
 	/**

@@ -10,6 +10,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerChunkEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.commands.CommandSourceStack;
@@ -29,9 +30,11 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 
 import luowei.player_block_status.PlayerBlockStatus;
+import luowei.player_block_status.lib.advancement.TerritoryAdvancements;
 import luowei.player_block_status.lib.api.PlayerBlockStatusLib;
 import luowei.player_block_status.lib.chunk.ChunkTerritoryAccess;
 import luowei.player_block_status.lib.chunk.ChunkTerritoryData;
+import luowei.player_block_status.lib.chunk.DemonChunks;
 import luowei.player_block_status.lib.chunk.RegionManager;
 import luowei.player_block_status.lib.chunk.StructureClaimProcessor;
 import luowei.player_block_status.lib.chunk.TerritoryConfig;
@@ -61,6 +64,16 @@ public final class TerritoryEventHandler {
 	}
 
 	public static void register() {
+		PlayerBlockStatusLib.addBeaconOfferingListener(DemonChunks::onBeaconOfferingChanged);
+		TerritoryAdvancements.register();
+
+		ServerChunkEvents.CHUNK_LOAD.register((world, chunk) -> {
+			if (!(world instanceof ServerLevel serverLevel)) {
+				return;
+			}
+			DemonChunks.validateBeaconsInChunk(serverLevel, chunk.getPos());
+		});
+
 		ServerTickEvents.END_WORLD_TICK.register(level -> {
 			if (!(level instanceof ServerLevel serverLevel)) {
 				return;
@@ -283,7 +296,12 @@ public final class TerritoryEventHandler {
 	}
 
 	public static void onBlockPlaced(ServerPlayer player, BlockPos pos) {
-		RegionManager.onBlockPlaced(player.serverLevel(), pos, player, PlayerBlockStatusLib.getOrganizationProvider());
+		RegionManager.onBlockPlaced(
+				player.serverLevel(),
+				pos,
+				player.getUUID(),
+				PlayerBlockStatusLib.getOrganizationProvider()
+		);
 	}
 
 	private static final class PlayerStayTracker {

@@ -38,8 +38,10 @@ public class DimensionTerritoryData extends SavedData {
 			TerritoryCodec.UUID_LONG_SET_MAP.optionalFieldOf("occupied_index", Map.of())
 					.forGetter(data -> data.entityChunkIndex.copyOccupiedForPersist()),
 			TerritoryCodec.UUID_LONG_SET_MAP.optionalFieldOf("border_index", Map.of())
-					.forGetter(data -> data.entityChunkIndex.copyBorderForPersist())
-	).apply(instance, (structures, registeredKeys, lastDailyDay, activeChunkKeys, dirtyChunkKeys, dirtyChunkEpochs, occupiedIndex, borderIndex) -> {
+					.forGetter(data -> data.entityChunkIndex.copyBorderForPersist()),
+			Codec.LONG.listOf().optionalFieldOf("demon_chunk_keys", List.of())
+					.forGetter(data -> new ArrayList<>(data.demonChunkKeys))
+	).apply(instance, (structures, registeredKeys, lastDailyDay, activeChunkKeys, dirtyChunkKeys, dirtyChunkEpochs, occupiedIndex, borderIndex, demonChunkKeys) -> {
 		DimensionTerritoryData data = new DimensionTerritoryData();
 		data.pendingStructures.addAll(structures);
 		data.registeredStructureInstanceKeys.addAll(registeredKeys);
@@ -52,6 +54,7 @@ public class DimensionTerritoryData extends SavedData {
 		}
 		data.dirtyChunkEpochs.keySet().retainAll(data.dirtyChunkKeys);
 		data.entityChunkIndex.load(occupiedIndex, borderIndex);
+		data.demonChunkKeys.addAll(demonChunkKeys);
 		return data;
 	}));
 
@@ -69,6 +72,7 @@ public class DimensionTerritoryData extends SavedData {
 	/** 每个 dirty key 的世代；标脏时即使 key 已在集合中也 +1，用于日更清脏时跳过期间再次标脏的页。 */
 	private final Map<Long, Integer> dirtyChunkEpochs = new HashMap<>();
 	private final EntityChunkIndex entityChunkIndex = new EntityChunkIndex(this::setDirty);
+	private final Set<Long> demonChunkKeys = new HashSet<>();
 	private long lastDailyDay = -1;
 	private boolean dailyRefreshInProgress;
 
@@ -137,6 +141,26 @@ public class DimensionTerritoryData extends SavedData {
 
 	public EntityChunkIndex getEntityChunkIndex() {
 		return entityChunkIndex;
+	}
+
+	public Set<Long> getDemonChunkKeys() {
+		return Set.copyOf(demonChunkKeys);
+	}
+
+	public boolean addDemonChunk(long chunkKey) {
+		if (demonChunkKeys.add(chunkKey)) {
+			setDirty();
+			return true;
+		}
+		return false;
+	}
+
+	public boolean removeDemonChunk(long chunkKey) {
+		if (demonChunkKeys.remove(chunkKey)) {
+			setDirty();
+			return true;
+		}
+		return false;
 	}
 
 	public long getLastDailyDay() {

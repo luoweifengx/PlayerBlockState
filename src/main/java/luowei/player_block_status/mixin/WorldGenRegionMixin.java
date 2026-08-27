@@ -13,11 +13,10 @@ import net.minecraft.world.level.block.state.BlockState;
 import luowei.player_block_status.lib.structure.StructureGenerationHooks;
 
 /**
- * 结构 placeInChunk 捕获窗口内的 WorldGenRegion.setBlock 双保险钩子。
+ * 结构 placeInChunk 捕获窗口内的 WorldGenRegion.setBlock 钩子。
  * <p>
- * 主路径由 {@link ChunkSetBlockStateMixin}（ProtoChunk / LevelChunk）覆盖；
- * 保留本 mixin 以防个别实现只走 Region.setBlock。重复坐标由
- * {@link luowei.player_block_status.lib.structure.StructureGenerationHooks} 的 HashSet 去重。
+ * 暂时为主捕获路径（{@link ChunkSetBlockStateMixin} 已从 mixins.json 注销）。
+ * 重复坐标由 {@link luowei.player_block_status.lib.structure.StructureGenerationHooks} 的 HashSet 去重。
  */
 @Mixin(WorldGenRegion.class)
 public abstract class WorldGenRegionMixin {
