@@ -14,13 +14,14 @@ import net.minecraft.world.level.ChunkPos;
 import luowei.player_block_status.lib.chunk.ChunkState;
 
 class PlayerBlockStatusLibForceSetTest {
-	private static final ChunkPos ORIGIN = new ChunkPos(0, 0);
+	private static ChunkPos ORIGIN;
 	private static final UUID OWNER = UUID.fromString("11111111-1111-1111-1111-111111111111");
 
 	@BeforeAll
 	static void bootstrapMinecraftRegistries() {
 		SharedConstants.tryDetectVersion();
 		Bootstrap.bootStrap();
+		ORIGIN = new ChunkPos(0, 0);
 	}
 
 	@Test
