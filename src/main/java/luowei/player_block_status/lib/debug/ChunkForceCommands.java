@@ -34,7 +34,8 @@ import luowei.player_block_status.lib.chunk.TerritoryDailyProcessor.ScheduleAtte
 import luowei.player_block_status.lib.chunk.TerritoryDailyProcessor.ScheduleResult;
 
 /**
- * 调试指令：强制改写区块状态与归属。
+ * OP 指令：强制改写区块状态与归属；{@code /pbs set} 对应
+ * {@link luowei.player_block_status.lib.api.PlayerBlockStatusLib#forceSetChunks}。
  *
  * <pre>
  * /pbs set here &lt;radius&gt; &lt;state|keep&gt;
@@ -44,6 +45,8 @@ import luowei.player_block_status.lib.chunk.TerritoryDailyProcessor.ScheduleResu
  * /pbs set at &lt;chunkX&gt; &lt;chunkZ&gt; &lt;radius&gt; &lt;state|keep&gt; [none|uuid|player]
  * /pbs sentinel
  * /pbs sentinel at &lt;chunkX&gt; &lt;chunkZ&gt;
+ * /pbs infect
+ * /pbs refresh
  * </pre>
  *
  * {@code keep} 表示不修改该项；{@code none} 表示清空归属。
@@ -73,6 +76,12 @@ public final class ChunkForceCommands {
 		return Commands.literal("refresh")
 				.requires(source -> source.hasPermission(2))
 				.executes(ctx -> runRefresh(ctx));
+	}
+
+	public static LiteralArgumentBuilder<CommandSourceStack> buildInfectNode() {
+		return Commands.literal("infect")
+				.requires(source -> source.hasPermission(2))
+				.executes(ctx -> runInfect(ctx));
 	}
 
 	public static LiteralArgumentBuilder<CommandSourceStack> buildSentinelNode() {
@@ -139,6 +148,20 @@ public final class ChunkForceCommands {
 		return 1;
 	}
 
+	private static int runInfect(CommandContext<CommandSourceStack> ctx) {
+		ServerLevel level = ctx.getSource().getLevel();
+		int changed = RegionManager.forceInfection(level);
+		ctx.getSource().sendSuccess(
+				() -> Component.literal(String.format(
+						"Infection finished: changed %d chunk(s) in %s",
+						changed,
+						level.dimension().location()
+				)),
+				true
+		);
+		return Math.max(changed, 1);
+	}
+
 	private static int runRefresh(CommandContext<CommandSourceStack> ctx) {
 		ServerLevel level = ctx.getSource().getLevel();
 		ScheduleAttempt attempt = RegionManager.forceDailyRefresh(
@@ -185,7 +208,7 @@ public final class ChunkForceCommands {
 		ChunkPos center = resolveCenter(ctx, here);
 		ServerLevel level = ctx.getSource().getLevel();
 
-		int changed = RegionManager.forceSetChunks(level, center, radius, state, updateOwner, owner);
+		int changed = PlayerBlockStatusLib.forceSetChunks(level, center, radius, state, updateOwner, owner);
 		String stateText = updateState ? state.name() : "(unchanged)";
 		String ownerText = !updateOwner ? "(unchanged)" : (owner == null ? "none" : owner.toString());
 		ctx.getSource().sendSuccess(

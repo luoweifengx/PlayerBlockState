@@ -15,12 +15,17 @@ import java.util.stream.Collectors;
 
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.level.ChunkPos;
 
 import luowei.player_block_status.PlayerBlockStatus;
 import luowei.player_block_status.lib.advancement.TerritoryAdvancements;
 import luowei.player_block_status.lib.api.OrganizationProvider;
 import luowei.player_block_status.lib.api.SafeBiomeChecker;
+import luowei.player_block_status.lib.org.OrganizationRecord;
+import luowei.player_block_status.lib.org.OrganizationService;
 
 /**
  * 每日日出时异步并行重算标脏区块的分数与状态，算完后回写主线程并清零停留分。
@@ -288,6 +293,7 @@ public final class TerritoryDailyProcessor {
 		try {
 			EntityChunkIndex index = data.getEntityChunkIndex();
 			Set<Long> stateChangedKeys = new HashSet<>();
+			Set<UUID> newlyOwnedOrgs = new HashSet<>();
 
 			for (Map.Entry<Long, ChunkState> entry : result.finalStates().entrySet()) {
 				long chunkKey = entry.getKey();
@@ -301,13 +307,17 @@ public final class TerritoryDailyProcessor {
 						chunk = data.getOrCreateChunk(chunkKey);
 					}
 					ChunkState previousState = chunk.getState();
+					UUID previousOrg = chunk.getOccupyingOrg();
 					chunk.getScoreModifiers().clear();
 					chunk.getScoreModifiers().putAll(snapshot.scoreModifiers());
 					chunk.getCachedScores().clear();
 					chunk.getCachedScores().putAll(snapshot.cachedScores());
 					if (previousState == ChunkState.DEMON && finalState != ChunkState.DEMON) {
 						finalState = ChunkState.DEMON;
-						occupyingOrg = chunk.getOccupyingOrg();
+						occupyingOrg = previousOrg;
+					}
+					if (isNewlyOwned(previousState, previousOrg, finalState, occupyingOrg)) {
+						newlyOwnedOrgs.add(occupyingOrg);
 					}
 					chunk.setState(finalState);
 					// OCCUPIED 与 BORDER 均保留基础态归属；其它状态按计算结果写入（可为 null）
@@ -338,13 +348,15 @@ public final class TerritoryDailyProcessor {
 					if (chunk != null
 							&& (chunk.getState() == ChunkState.OCCUPIED
 							|| chunk.getState() == ChunkState.BORDER
-							|| chunk.getState() == ChunkState.DEMON)) {
+							|| chunk.getState() == ChunkState.DEMON
+							|| chunk.getState() == ChunkState.HOSTILE)) {
 						continue;
 					}
 					chunk = data.getOrCreateChunk(chunkKey);
 					if (chunk.getState() == ChunkState.OCCUPIED
 							|| chunk.getState() == ChunkState.BORDER
-							|| chunk.getState() == ChunkState.DEMON) {
+							|| chunk.getState() == ChunkState.DEMON
+							|| chunk.getState() == ChunkState.HOSTILE) {
 						continue;
 					}
 					ChunkState previousState = chunk.getState();
@@ -371,7 +383,10 @@ public final class TerritoryDailyProcessor {
 				}
 			}
 
-			correctNeighborhoodAfterStateChanges(data, index, stateChangedKeys);
+			Set<Long> neighborsBecameBorder = correctNeighborhoodAfterStateChanges(data, index, stateChangedKeys);
+			Set<Long> borderHostileSeeds = new HashSet<>(stateChangedKeys);
+			borderHostileSeeds.addAll(neighborsBecameBorder);
+			correctHostilePlayerBorderCardinals(data, borderHostileSeeds);
 
 			data.clearRecomputedDirtyKeys(epochSnapshot);
 			data.finishDailyRefresh(currentDay);
@@ -394,6 +409,7 @@ public final class TerritoryDailyProcessor {
 					"[pbs daily] state changed chunks: {}",
 					formatChunkKeys(stateChangedKeys)
 			);
+			notifyNewlyOwnedMembers(level.getServer(), newlyOwnedOrgs);
 			TerritoryAdvancements.checkHomeForOnlinePlayers(level.getServer());
 		} catch (Exception exception) {
 			data.cancelDailyRefreshInProgress();
@@ -402,23 +418,21 @@ public final class TerritoryDailyProcessor {
 	}
 
 	/**
-	 * 日更 apply 后，对状态确有变化的区块做邻域即时修正（切比雪夫 ≤ {@link TerritoryConfig#hostileBorderExtensionChunks}）。
-	 * <ul>
-	 *   <li>自身为 NATURAL：邻域内存在 BORDER → HOSTILE_BORDER</li>
-	 *   <li>自身为 BORDER：四邻均为同 org 占领族 → OCCUPIED</li>
-	 * </ul>
-	 * 修正后对距离 2 内邻区再扫最多 1 遍，避免无限循环。
+	 * 日更 apply 后只同步变化格的四邻（看四邻自己的四邻），不再向外洪水。
+	 * BORDER ↔ OCCUPIED 与占领内部规则相同：四邻都是自己的占领族则内部，否则边界。
+	 *
+	 * @return 本次被改成 BORDER 的邻区（供后续敌对/玩家边界四邻降级）
 	 */
-	private static void correctNeighborhoodAfterStateChanges(
+	private static Set<Long> correctNeighborhoodAfterStateChanges(
 			WorldRegionData data,
 			EntityChunkIndex index,
 			Set<Long> seedChangedKeys
 	) {
+		Set<Long> becameBorder = new HashSet<>();
 		if (seedChangedKeys.isEmpty()) {
-			return;
+			return becameBorder;
 		}
 
-		int extension = TerritoryConfig.hostileBorderExtensionChunks;
 		ChunkStateMachine.NeighborResolver resolver = chunkKey -> {
 			ChunkTerritoryData neighbor = data.getChunk(chunkKey);
 			return neighbor == null
@@ -426,66 +440,95 @@ public final class TerritoryDailyProcessor {
 					: new ChunkStateMachine.NeighborChunkView(neighbor.getState(), neighbor.getOccupyingOrg());
 		};
 
-		Set<Long> frontier = new HashSet<>(seedChangedKeys);
-		for (int pass = 0; pass < 2 && !frontier.isEmpty(); pass++) {
-			Set<Long> corrected = new HashSet<>();
-			for (long chunkKey : frontier) {
-				ChunkTerritoryData chunk = data.getChunk(chunkKey);
-				if (chunk == null) {
-					continue;
-				}
-
-				ChunkState state = chunk.getState();
-				if (state == ChunkState.DEMON) {
-					continue;
-				}
-				if (state == ChunkState.NATURAL) {
-					if (!ChunkStateMachine.hasBorderWithinChebyshev(resolver, chunkKey, extension)) {
-						continue;
-					}
-					chunk.setState(ChunkState.HOSTILE_BORDER);
-					chunk.setOccupyingOrg(null);
-					chunk.getCachedScores().clear();
-					data.persistChunkChange(chunkKey, chunk);
-					index.replaceChunk(chunkKey, ChunkState.HOSTILE_BORDER, null);
-					corrected.add(chunkKey);
-					seedChangedKeys.add(chunkKey);
-					PlayerBlockStatus.LOGGER.info(
-							"[pbs daily][{}] neighborhood fix: NATURAL -> HOSTILE_BORDER (border within chebyshev {})",
-							formatChunk(new ChunkPos(chunkKey)),
-							extension
-					);
-				} else if (state == ChunkState.BORDER) {
-					UUID org = chunk.getOccupyingOrg();
-					if (!ChunkStateMachine.allCardinalNeighborsOwnOccupiedFamily(resolver, chunkKey, org)) {
-						continue;
-					}
-					chunk.setState(ChunkState.OCCUPIED);
-					data.persistChunkChange(chunkKey, chunk);
-					index.replaceChunk(chunkKey, ChunkState.OCCUPIED, org);
-					corrected.add(chunkKey);
-					seedChangedKeys.add(chunkKey);
-					PlayerBlockStatus.LOGGER.info(
-							"[pbs daily][{}] neighborhood fix: BORDER -> OCCUPIED (all cardinal own occupied family)",
-							formatChunk(new ChunkPos(chunkKey))
-					);
-				}
+		Set<Long> neighbors = ChunkStateMachine.cardinalNeighborKeys(seedChangedKeys);
+		for (long chunkKey : neighbors) {
+			ChunkTerritoryData chunk = data.getChunk(chunkKey);
+			if (chunk == null) {
+				continue;
 			}
-
-			if (corrected.isEmpty() || pass == 1) {
-				break;
+			ChunkState state = chunk.getState();
+			UUID org = chunk.getOccupyingOrg();
+			ChunkState next = ChunkStateMachine.occupiedFamilyFromCardinals(resolver, chunkKey, org, state);
+			if (next == state) {
+				continue;
 			}
+			chunk.setState(next);
+			data.persistChunkChange(chunkKey, chunk);
+			index.replaceChunk(chunkKey, next, org);
+			if (next == ChunkState.BORDER) {
+				becameBorder.add(chunkKey);
+			}
+			PlayerBlockStatus.LOGGER.info(
+					"[pbs daily][{}] neighbor sync: {} -> {} (cardinal occupied-family)",
+					formatChunk(new ChunkPos(chunkKey)),
+					state,
+					next
+			);
+		}
+		return becameBorder;
+	}
 
-			frontier = new HashSet<>();
-			for (long key : corrected) {
-				ChunkPos pos = new ChunkPos(key);
-				for (int dx = -extension; dx <= extension; dx++) {
-					for (int dz = -extension; dz <= extension; dz++) {
-						if (Math.max(Math.abs(dx), Math.abs(dz)) > extension) {
-							continue;
-						}
-						frontier.add(ChunkPos.asLong(pos.x + dx, pos.z + dz));
-					}
+	/**
+	 * 刚变成 BORDER / HOSTILE_BORDER 的格子，只对其四邻做一层降级（不洪水）。
+	 */
+	private static void correctHostilePlayerBorderCardinals(
+			WorldRegionData data,
+			Set<Long> seedKeys
+	) {
+		if (seedKeys.isEmpty()) {
+			return;
+		}
+
+		ChunkStateMachine.NeighborResolver resolver = chunkKey -> {
+			ChunkTerritoryData neighbor = data.getChunk(chunkKey);
+			return neighbor == null
+					? null
+					: new ChunkStateMachine.NeighborChunkView(neighbor.getState(), neighbor.getOccupyingOrg());
+		};
+
+		Map<Long, ChunkState> demotes = ChunkStateMachine.cardinalDemotesFromNewBorders(resolver, seedKeys);
+		if (demotes.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<Long, ChunkState> entry : demotes.entrySet()) {
+			long chunkKey = entry.getKey();
+			ChunkTerritoryData chunk = data.getChunk(chunkKey);
+			ChunkState previous = chunk == null ? ChunkState.NATURAL : chunk.getState();
+			PlayerBlockStatus.LOGGER.info(
+					"[pbs daily][{}] neighbor sync: {} -> {} (cardinal border/hostile-border)",
+					formatChunk(new ChunkPos(chunkKey)),
+					previous,
+					entry.getValue()
+			);
+		}
+		data.applyCardinalBorderDemotes(demotes);
+	}
+
+	/**
+	 * 新状态为某账户占领族（OCCUPIED/BORDER），且原先并非同一账户的占领族。
+	 * 邻域修正（BORDER→OCCUPIED）不算新纳入。
+	 */
+	static boolean isNewlyOwned(ChunkState previousState, UUID previousOrg, ChunkState newState, UUID newOrg) {
+		if (newOrg == null || newState == null || !newState.isOccupiedFamily()) {
+			return false;
+		}
+		return previousState == null
+				|| !previousState.isOccupiedFamily()
+				|| !newOrg.equals(previousOrg);
+	}
+
+	private static void notifyNewlyOwnedMembers(MinecraftServer server, Set<UUID> newlyOwnedOrgs) {
+		if (server == null || newlyOwnedOrgs.isEmpty()) {
+			return;
+		}
+		for (UUID orgId : newlyOwnedOrgs) {
+			Collection<UUID> memberIds = OrganizationService.getOrganization(server, orgId)
+					.map(OrganizationRecord::members)
+					.orElseGet(() -> Set.of(orgId));
+			for (UUID memberId : memberIds) {
+				ServerPlayer player = server.getPlayerList().getPlayer(memberId);
+				if (player != null) {
+					player.playNotifySound(SoundEvents.EXPERIENCE_ORB_PICKUP, SoundSource.PLAYERS, 0.6f, 1.2f);
 				}
 			}
 		}

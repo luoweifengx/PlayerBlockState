@@ -30,6 +30,10 @@ public final class TerritoryQueries {
 	private TerritoryQueries() {
 	}
 
+	/**
+	 * 只读查询已加载区块的领土；未加载或不含领土数据时 empty。
+	 * 不触发 chunk 加载或生成。
+	 */
 	public static Optional<ChunkTerritoryView> queryChunk(ServerLevel level, ChunkPos chunkPos) {
 		return WorldRegionData.get(level).queryChunk(chunkPos)
 				.map(data -> ChunkTerritoryView.from(chunkPos, data));
@@ -53,6 +57,7 @@ public final class TerritoryQueries {
 
 	/**
 	 * 以区块为中心，在切比雪夫半径内查询指定状态的区块，按状态分组，组内由近到远排序。
+	 * 未加载格子视为 {@link ChunkState#NATURAL}，不触发 chunk 加载。
 	 */
 	public static Map<ChunkState, List<ChunkPos>> queryChunksInRadius(
 			ServerLevel level,
@@ -156,7 +161,8 @@ public final class TerritoryQueries {
 	/**
 	 * 以中心与切比雪夫半径编码平面状态图。
 	 * 格式：{@code PBS1:<radius>:<centerX>:<centerZ>:<data>}，
-	 * {@code data} 长度 {@code (2r+1)^2}，行优先（dz 外、dx 内），每字符为状态 id（'1'..'7'）。
+	 * {@code data} 长度 {@code (2r+1)^2}，行优先（dz 外、dx 内），每字符为状态 id（'1'..'8'）。
+	 * 未加载格子编码为 NATURAL，不触发 chunk 加载。
 	 */
 	public static ChunkStateMapSnapshot encodeChunkStateMap(ServerLevel level, ChunkPos center, int radiusChunks) {
 		if (radiusChunks < 0) {
@@ -225,6 +231,7 @@ public final class TerritoryQueries {
 	public record ChunkStateMapSnapshot(String encoded, int radius, ChunkPos center) {
 	}
 
+	/** 已加载且有领土数据则取其状态，否则 NATURAL（含未加载）。 */
 	private static ChunkState resolveState(ServerLevel level, ChunkPos chunkPos) {
 		return WorldRegionData.get(level).queryChunk(chunkPos)
 				.map(data -> data.getState())

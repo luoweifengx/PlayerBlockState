@@ -22,19 +22,26 @@ public final class TerritoryConfig {
 	public static int naturalReturnThreshold = 500;
 	public static int deathThreshold = -100;
 	/** 每放置方块得分 */
-	public static int blockScorePerBlock = 500;
-	public static int stayScorePerInterval = 3;
+	public static int blockScorePerBlock = 20;
+	public static int stayScorePerInterval = 5;
 	public static int stayTickInterval = 100;
 	public static int deathPenalty = -50;
 	public static int deathRecoveryPerDay = 30;
 	/** 从占领区块夺走所属：挑战者分数须 ≥ 当前所属分数 × 此倍率 */
 	public static double occupationTakeoverMultiplier = 2.5;
-	/** 从边界区块夺走所属：挑战者分数须 ≥ 当前所属分数 × 此倍率 */
-	public static double borderTakeoverMultiplier = 1.25;
-	/** 从边界区块向外延伸的自然区块层数（切比雪夫距离），标为敌对边界 */
+	/** 从边界区块夺走所属：挑战者分数须 ≥ 当前所属分数 × 此倍率；亦用于敌对边界入境 */
+	public static double borderTakeoverMultiplier = 1.9;
+	/**
+	 * 敌对边界生成模式，二者互斥。默认 {@link HostileBorderMode#INFECTION 感染}；
+	 * {@link HostileBorderMode#SPREAD 传播} 时日更按 {@link #hostileBorderExtensionChunks} 派生敌对边界。
+	 */
+	public static HostileBorderMode hostileBorderMode = HostileBorderMode.INFECTION;
+	/** 传播模式下，从边界区块向外延伸的自然区块层数（切比雪夫距离），标为敌对边界 */
 	public static int hostileBorderExtensionChunks = 2;
-	/** 世界日时间（0-24000）触发每日刷新的时刻 */
+	/** 世界日时间（0-24000）触发每日刷新的时刻；结算已改按 {@link #refreshIntervalTicks}，此值不再参与调度 */
 	public static int dailyRefreshTime = 0;
+	/** 领土结算周期（游戏 tick）。{@code gameTime % refreshIntervalTicks == 0} 进入新周期时调度脏页重算 */
+	public static int refreshIntervalTicks = 3000;
 	/** 结构 sentinel 刷写与链式认领每 tick 最多改写的方块数（配置项 `structureClaimBlocksPerTick`） */
 	public static int structureClaimBlocksPerTick = 32386;
 	/** 进入自己的领地时的默认提示（可被客户端配置 / {@code /pbs territory backmine} 覆盖） */
@@ -54,5 +61,23 @@ public final class TerritoryConfig {
 
 	public static boolean isStructureSentinel(UUID owner) {
 		return STRUCTURE_BLOCK_SENTINEL.equals(owner);
+	}
+
+	public static boolean isInfectionMode() {
+		return hostileBorderMode == HostileBorderMode.INFECTION;
+	}
+
+	public static boolean isSpreadMode() {
+		return hostileBorderMode == HostileBorderMode.SPREAD;
+	}
+
+	/**
+	 * 从未占领态进入占领所需分数。敌对边界 / 敌对占领按 {@link #occupationThreshold} × {@link #borderTakeoverMultiplier}。
+	 */
+	public static int occupationScoreRequired(ChunkState previous) {
+		if (previous == ChunkState.HOSTILE_BORDER || previous == ChunkState.HOSTILE) {
+			return (int) Math.ceil(occupationThreshold * borderTakeoverMultiplier);
+		}
+		return occupationThreshold;
 	}
 }

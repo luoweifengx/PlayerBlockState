@@ -40,26 +40,60 @@ public final class TerritoryPerf {
 		return nanos >= DRAIN_WARN_NANOS;
 	}
 
-	public static void logSentinelDrain(int drained, int queueRemaining, int chunksTouched, long drainNs) {
+	/**
+	 * 单 tick drain 内四段墙钟累加：lookup={@code getPlacedBlockOwner}，
+	 * create={@code getOrCreateChunk}，put={@code addPlacedBlock}，persist={@code persistChunkChange}。
+	 */
+	public static final class StageNanos {
+		public long lookupNs;
+		public long createNs;
+		public long putNs;
+		public long persistNs;
+
+		public static final StageNanos ZERO = new StageNanos();
+	}
+
+	public static void logSentinelDrain(
+			int drained,
+			int queueRemaining,
+			int chunksTouched,
+			int newChunks,
+			int hotWrites,
+			long drainNs,
+			StageNanos stages
+	) {
 		if (drained == 0 && queueRemaining == 0) {
 			return;
 		}
+		StageNanos split = stages != null ? stages : StageNanos.ZERO;
 		if (exceedsWarnBudget(drainNs)) {
 			PlayerBlockStatus.LOGGER.warn(
-					"[pbs perf] sentinelDrain drained={} queueRemaining={} chunksTouched={} drainNs={}",
+					"[pbs perf] sentinelDrain drained={} queueRemaining={} chunksTouched={} newChunks={} hotWrites={} drainNs={} lookupNs={} createNs={} putNs={} persistNs={}",
 					drained,
 					queueRemaining,
 					chunksTouched,
-					drainNs
+					newChunks,
+					hotWrites,
+					drainNs,
+					split.lookupNs,
+					split.createNs,
+					split.putNs,
+					split.persistNs
 			);
 			return;
 		}
 		PlayerBlockStatus.LOGGER.debug(
-				"[pbs perf] sentinelDrain drained={} queueRemaining={} chunksTouched={} drainNs={}",
+				"[pbs perf] sentinelDrain drained={} queueRemaining={} chunksTouched={} newChunks={} hotWrites={} drainNs={} lookupNs={} createNs={} putNs={} persistNs={}",
 				drained,
 				queueRemaining,
 				chunksTouched,
-				drainNs
+				newChunks,
+				hotWrites,
+				drainNs,
+				split.lookupNs,
+				split.createNs,
+				split.putNs,
+				split.persistNs
 		);
 	}
 

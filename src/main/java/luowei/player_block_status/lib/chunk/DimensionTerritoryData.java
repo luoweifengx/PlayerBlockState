@@ -11,6 +11,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
 
@@ -55,6 +56,17 @@ public class DimensionTerritoryData extends SavedData {
 		data.dirtyChunkEpochs.keySet().retainAll(data.dirtyChunkKeys);
 		data.entityChunkIndex.load(occupiedIndex, borderIndex);
 		data.demonChunkKeys.addAll(demonChunkKeys);
+		PlayerBlockStatus.LOGGER.debug(
+				"[pbs persist] DimensionTerritoryData codec load lastDailyDay={} active={} dirty={} occupiedOrgs={} occupiedKeys={} borderOrgs={} borderKeys={} demonKeys={}",
+				data.lastDailyDay,
+				data.activeChunkKeys.size(),
+				data.dirtyChunkKeys.size(),
+				occupiedIndex.size(),
+				countIndexKeys(occupiedIndex),
+				borderIndex.size(),
+				countIndexKeys(borderIndex),
+				data.demonChunkKeys.size()
+		);
 		return data;
 	}));
 
@@ -150,6 +162,14 @@ public class DimensionTerritoryData extends SavedData {
 	public boolean addDemonChunk(long chunkKey) {
 		if (demonChunkKeys.add(chunkKey)) {
 			setDirty();
+			ChunkPos chunkPos = new ChunkPos(chunkKey);
+			PlayerBlockStatus.LOGGER.debug(
+					"[pbs persist] addDemonChunk cx={} cz={} key={} demonSize={}",
+					chunkPos.x,
+					chunkPos.z,
+					chunkKey,
+					demonChunkKeys.size()
+			);
 			return true;
 		}
 		return false;
@@ -158,6 +178,14 @@ public class DimensionTerritoryData extends SavedData {
 	public boolean removeDemonChunk(long chunkKey) {
 		if (demonChunkKeys.remove(chunkKey)) {
 			setDirty();
+			ChunkPos chunkPos = new ChunkPos(chunkKey);
+			PlayerBlockStatus.LOGGER.debug(
+					"[pbs persist] removeDemonChunk cx={} cz={} key={} demonSize={}",
+					chunkPos.x,
+					chunkPos.z,
+					chunkKey,
+					demonChunkKeys.size()
+			);
 			return true;
 		}
 		return false;
@@ -165,6 +193,17 @@ public class DimensionTerritoryData extends SavedData {
 
 	public long getLastDailyDay() {
 		return lastDailyDay;
+	}
+
+	/**
+	 * 结算周期改为 {@code gameTime / refreshIntervalTicks} 后，旧存档里的日历日可能大于当前周期。
+	 * 将其压到 {@code currentPeriod - 1}，让本周期可以调度。
+	 */
+	public void alignLastRefreshPeriod(long currentPeriod) {
+		if (lastDailyDay > currentPeriod) {
+			lastDailyDay = currentPeriod - 1;
+			setDirty();
+		}
 	}
 
 	public boolean tryBeginDailyRefresh(long currentDay) {
@@ -245,5 +284,18 @@ public class DimensionTerritoryData extends SavedData {
 	public void registerStructure(StructureBounds bounds) {
 		pendingStructures.add(bounds);
 		setDirty();
+	}
+
+	private static int countIndexKeys(Map<?, ? extends Set<Long>> index) {
+		if (index == null || index.isEmpty()) {
+			return 0;
+		}
+		int n = 0;
+		for (Set<Long> keys : index.values()) {
+			if (keys != null) {
+				n += keys.size();
+			}
+		}
+		return n;
 	}
 }

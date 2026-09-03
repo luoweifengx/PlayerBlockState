@@ -43,4 +43,6 @@ replay_*.log
 
 logs/
 .cursor/
-docs/
+# 内部文稿不入库；README 引用的截图除外
+docs/*
+!docs/*.png

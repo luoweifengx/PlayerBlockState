@@ -12,7 +12,7 @@ import luowei.player_block_status.lib.api.SafeBiomeChecker;
 import luowei.player_block_status.lib.chunk.TerritoryDailyProcessor.ScheduleAttempt;
 
 /**
- * 维度领土管理器：事件只记账与标脏，重算仅在每日日出对 dirty 区块异步执行。
+ * 维度领土管理器：事件只记账与标脏，重算每 {@link TerritoryConfig#refreshIntervalTicks} tick 对 dirty 区块异步执行。
  */
 public final class RegionManager {
 	private RegionManager() {
@@ -81,7 +81,9 @@ public final class RegionManager {
 	}
 
 	/**
-	 * 调试用：强制设置半径内区块状态与/或归属。详见 {@link WorldRegionData#forceSetChunks}。
+	 * 强制设置半径内区块状态与/或归属。
+	 * {@link luowei.player_block_status.lib.api.PlayerBlockStatusLib#forceSetChunks} 与 {@code /pbs set} 均汇入此处。
+	 * 详见 {@link WorldRegionData#forceSetChunks}。仅服务端逻辑线程生效。
 	 */
 	public static int forceSetChunks(
 			ServerLevel level,
@@ -91,49 +93,56 @@ public final class RegionManager {
 			boolean updateOwner,
 			UUID owner
 	) {
+		if (level == null || center == null) {
+			return 0;
+		}
+		if (!level.getServer().isSameThread()) {
+			return 0;
+		}
 		return WorldRegionData.get(level).forceSetChunks(center, radiusChunks, state, updateOwner, owner);
 	}
 
 	/**
-	 * 每日重算触发：{@code currentDay > lastDailyDay} 且 {@code timeOfDay >= dailyRefreshTime}。
-	 * 不再要求精确落在单个 tick，避免服务器 lag 跳过日出时刻。
+	 * 结算触发：每 {@link TerritoryConfig#refreshIntervalTicks} 游戏 tick 一个周期
+	 *（{@code gameTime % interval == 0}）。用周期号比较，避免服务器 lag 跳过整除点。
 	 */
 	public static void tickDaily(ServerLevel level, OrganizationProvider orgProvider, SafeBiomeChecker safeChecker) {
-		long dayTime = level.getDayTime();
-		long currentDay = dayTime / 24000L;
-		int timeOfDay = (int) (dayTime % 24000L);
+		tickInfection(level);
+
+		long period = currentRefreshPeriod(level);
 		WorldRegionData data = WorldRegionData.get(level);
-		long lastDailyDay = data.getLastDailyDay();
+		data.alignLastRefreshPeriod(period);
 
-		if (currentDay <= lastDailyDay) {
+		if (period <= data.getLastDailyDay()) {
 			return;
 		}
 
-		if (timeOfDay < TerritoryConfig.dailyRefreshTime) {
-			return;
-		}
-
-		// PlayerBlockStatus.LOGGER.info(
-		// 		"[pbs daily] day rollover ready for {}: currentDay={}, lastDailyDay={}, timeOfDay={}, refreshTime={}, dirtyChunks={}, activeChunks={}",
-		// 		level.dimension().location(),
-		// 		currentDay,
-		// 		lastDailyDay,
-		// 		timeOfDay,
-		// 		TerritoryConfig.dailyRefreshTime,
-		// 		data.getDirtyChunkKeys().size(),
-		// 		data.getActiveChunkKeyCount()
-		// );
-
-		TerritoryDailyProcessor.trySchedule(level, orgProvider, safeChecker, currentDay);
+		TerritoryDailyProcessor.trySchedule(level, orgProvider, safeChecker, period);
 	}
 
-	/** 调试用：立即调度一次标脏区块重算，可同一天重复执行。 */
+	static void tickInfection(ServerLevel level) {
+		if (!TerritoryConfig.isInfectionMode() || !Infection.isScheduledTick(level.getGameTime())) {
+			return;
+		}
+		Infection.runForLevel(level);
+	}
+
+	/** 调试用：立即跑一遍感染整条链路，不依赖配置模式与 tick。 */
+	public static int forceInfection(ServerLevel level) {
+		return Infection.runForLevel(level);
+	}
+
+	/** 调试用：立即调度一次标脏区块重算，可同一周期重复执行。 */
 	public static ScheduleAttempt forceDailyRefresh(
 			ServerLevel level,
 			OrganizationProvider orgProvider,
 			SafeBiomeChecker safeChecker
 	) {
-		long currentDay = level.getDayTime() / 24000L;
-		return TerritoryDailyProcessor.tryScheduleForced(level, orgProvider, safeChecker, currentDay);
+		return TerritoryDailyProcessor.tryScheduleForced(level, orgProvider, safeChecker, currentRefreshPeriod(level));
+	}
+
+	static long currentRefreshPeriod(ServerLevel level) {
+		int interval = Math.max(1, TerritoryConfig.refreshIntervalTicks);
+		return level.getGameTime() / interval;
 	}
 }

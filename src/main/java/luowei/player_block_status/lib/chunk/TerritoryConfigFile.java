@@ -32,10 +32,12 @@ public final class TerritoryConfigFile {
 			"Territory scoring and thresholds. Restart the game after editing. "
 					+ "blockScorePerBlock: points per remaining placed block. "
 					+ "occupationThreshold / naturalReturnThreshold / deathThreshold: state lines. "
-					+ "stayScorePerInterval every stayTickInterval ticks; stay scores reset at daily refresh. "
+					+ "stayScorePerInterval every stayTickInterval ticks; stay scores reset at each refresh. "
 					+ "occupationTakeoverMultiplier / borderTakeoverMultiplier: challenger vs current owner. "
-					+ "hostileBorderExtensionChunks: Chebyshev width beyond BORDER. "
-					+ "dailyRefreshTime: world day time 0-23999. "
+					+ "borderTakeoverMultiplier also scales HOSTILE_BORDER inbound occupation. "
+					+ "hostileBorderMode: infection (sample borders on the half-refresh tick) or spread (daily Chebyshev extension). "
+					+ "hostileBorderExtensionChunks: Chebyshev width beyond BORDER in spread mode. "
+					+ "refreshIntervalTicks: game ticks between dirty-chunk recomputes (default 3000). "
 					+ "structureClaimBlocksPerTick: per-tick budget for sentinel flush and structure claim. "
 					+ "showTerritoryEnterMessage: master switch for action-bar enter text.";
 
@@ -102,8 +104,11 @@ public final class TerritoryConfigFile {
 				json, "occupationTakeoverMultiplier", TerritoryConfig.occupationTakeoverMultiplier);
 		TerritoryConfig.borderTakeoverMultiplier = readPositiveDouble(
 				json, "borderTakeoverMultiplier", TerritoryConfig.borderTakeoverMultiplier);
+		TerritoryConfig.hostileBorderMode = readHostileBorderMode(json, TerritoryConfig.hostileBorderMode);
 		TerritoryConfig.hostileBorderExtensionChunks = readIntAtLeast(
 				json, "hostileBorderExtensionChunks", TerritoryConfig.hostileBorderExtensionChunks, 0);
+		TerritoryConfig.refreshIntervalTicks = readIntAtLeast(
+				json, "refreshIntervalTicks", TerritoryConfig.refreshIntervalTicks, 1);
 		TerritoryConfig.dailyRefreshTime = readIntRange(
 				json, "dailyRefreshTime", TerritoryConfig.dailyRefreshTime, 0, 23999);
 		TerritoryConfig.structureClaimBlocksPerTick = readIntAtLeast(
@@ -136,7 +141,10 @@ public final class TerritoryConfigFile {
 		json.addProperty("deathRecoveryPerDay", TerritoryConfig.deathRecoveryPerDay);
 		json.addProperty("occupationTakeoverMultiplier", TerritoryConfig.occupationTakeoverMultiplier);
 		json.addProperty("borderTakeoverMultiplier", TerritoryConfig.borderTakeoverMultiplier);
+		json.addProperty("hostileBorderMode", TerritoryConfig.hostileBorderMode.id());
+		json.remove("directSpreadEnabled");
 		json.addProperty("hostileBorderExtensionChunks", TerritoryConfig.hostileBorderExtensionChunks);
+		json.addProperty("refreshIntervalTicks", TerritoryConfig.refreshIntervalTicks);
 		json.addProperty("dailyRefreshTime", TerritoryConfig.dailyRefreshTime);
 		json.addProperty("structureClaimBlocksPerTick", TerritoryConfig.structureClaimBlocksPerTick);
 		json.addProperty("showTerritoryEnterMessage", TerritoryConfig.showTerritoryEnterMessage);
@@ -186,6 +194,26 @@ public final class TerritoryConfigFile {
 		} catch (RuntimeException ignored) {
 		}
 		PlayerBlockStatus.LOGGER.warn("Invalid {} in {}, using {}", key, FILE, fallback);
+		return fallback;
+	}
+
+	private static HostileBorderMode readHostileBorderMode(JsonObject json, HostileBorderMode fallback) {
+		if (json.has("hostileBorderMode")) {
+			try {
+				HostileBorderMode mode = HostileBorderMode.fromId(json.get("hostileBorderMode").getAsString(), null);
+				if (mode != null) {
+					return mode;
+				}
+			} catch (RuntimeException ignored) {
+			}
+			PlayerBlockStatus.LOGGER.warn("Invalid hostileBorderMode in {}, using {}", FILE, fallback.id());
+			return fallback;
+		}
+		if (json.has("directSpreadEnabled")) {
+			return readBoolean(json, "directSpreadEnabled", true)
+					? HostileBorderMode.INFECTION
+					: HostileBorderMode.SPREAD;
+		}
 		return fallback;
 	}
 

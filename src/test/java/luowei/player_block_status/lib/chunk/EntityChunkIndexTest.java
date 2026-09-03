@@ -193,6 +193,13 @@ class EntityChunkIndexTest {
 		assertEquals(0, rebuilt.getOwnedCount(PLAYER));
 	}
 
+	@Test
+	void getAllBorderChunksUnionsEveryEntity() {
+		EntityChunkIndex index = seededPlayerAndOrg();
+
+		assertEquals(Set.of(KEY_BORDER_PLAYER, KEY_BORDER_ORG), index.getAllBorderChunks());
+	}
+
 	private static EntityChunkIndex seededPlayerAndOrg() {
 		EntityChunkIndex index = new EntityChunkIndex();
 		index.replaceChunk(KEY_OCCUPIED_PLAYER, ChunkState.OCCUPIED, PLAYER);

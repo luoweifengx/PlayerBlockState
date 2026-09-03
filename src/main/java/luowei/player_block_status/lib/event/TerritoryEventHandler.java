@@ -71,6 +71,7 @@ public final class TerritoryEventHandler {
 			if (!(world instanceof ServerLevel serverLevel)) {
 				return;
 			}
+			StructureSentinelWriteQueue.onChunkLoad(serverLevel, chunk);
 			DemonChunks.validateBeaconsInChunk(serverLevel, chunk.getPos());
 		});
 
@@ -99,6 +100,7 @@ public final class TerritoryEventHandler {
 					.then(OrganizationCommands.buildOrgNode())
 					.then(TerritoryNameCommands.buildTerritoryNode())
 					.then(ChunkForceCommands.buildRefreshNode())
+					.then(ChunkForceCommands.buildInfectNode())
 					.then(ChunkForceCommands.buildSetNode())
 					.then(ChunkForceCommands.buildSentinelNode())
 					.then(Commands.literal("query")

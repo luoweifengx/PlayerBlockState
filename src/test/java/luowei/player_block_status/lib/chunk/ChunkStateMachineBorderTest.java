@@ -31,6 +31,7 @@ class ChunkStateMachineBorderTest {
 	@AfterEach
 	void restoreTerritoryConfigDefaults() {
 		TerritoryConfig.hostileBorderExtensionChunks = 2;
+		TerritoryConfig.hostileBorderMode = HostileBorderMode.SPREAD;
 	}
 
 	@Test
@@ -115,6 +116,37 @@ class ChunkStateMachineBorderTest {
 		);
 
 		assertNotEquals(ChunkState.HOSTILE_BORDER, result.get(key(4, 1)));
+	}
+
+	@Test
+	void hostileOccupiedIsNotOverwrittenByHostileBorder() {
+		Map<Long, ChunkState> base = occupiedSquare();
+		base.put(key(4, 1), ChunkState.HOSTILE);
+
+		Map<Long, ChunkState> result = ChunkStateMachine.deriveBorderStatesFromBaseStates(
+				base,
+				occupiedSquareOrgs(ORG_A),
+				Map.of()
+		);
+
+		assertEquals(ChunkState.HOSTILE, result.get(key(4, 1)));
+	}
+
+	@Test
+	void infectionModeDoesNotDeriveHostileBorderFromDaily() {
+		TerritoryConfig.hostileBorderMode = HostileBorderMode.INFECTION;
+		Map<Long, ChunkState> base = occupiedSquare();
+		base.put(key(4, 1), ChunkState.NATURAL);
+		base.put(key(3, 1), ChunkState.NATURAL);
+
+		Map<Long, ChunkState> result = ChunkStateMachine.deriveBorderStatesFromBaseStates(
+				base,
+				occupiedSquareOrgs(ORG_A),
+				Map.of()
+		);
+
+		assertEquals(ChunkState.NATURAL, result.get(key(3, 1)));
+		assertEquals(ChunkState.NATURAL, result.get(key(4, 1)));
 	}
 
 	private static Map<Long, ChunkState> deriveOwnOccupiedSquare() {

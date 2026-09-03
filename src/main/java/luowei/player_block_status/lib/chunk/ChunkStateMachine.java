@@ -1,7 +1,9 @@
 package luowei.player_block_status.lib.chunk;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -65,8 +67,10 @@ public final class ChunkStateMachine {
 			}
 		}
 
-		// ② 仅遍历边界区块，向外延伸若干格自然区标为敌对边界
-		deriveHostileBordersFromBorderChunks(finalStates, contextChunks, borderKeys);
+		// ② 传播模式：仅遍历边界区块，向外延伸若干格自然区标为敌对边界
+		if (TerritoryConfig.isSpreadMode()) {
+			deriveHostileBordersFromBorderChunks(finalStates, contextChunks, borderKeys);
+		}
 
 		return finalStates;
 	}
@@ -93,7 +97,7 @@ public final class ChunkStateMachine {
 					}
 					long neighborKey = ChunkPos.asLong(borderPos.x + dx, borderPos.z + dz);
 					ChunkState neighborState = resolveState(neighborKey, states, contextChunks);
-					if (neighborState == ChunkState.DEMON) {
+					if (neighborState == ChunkState.DEMON || neighborState == ChunkState.HOSTILE) {
 						continue;
 					}
 					if (neighborState == null || neighborState == ChunkState.NATURAL) {
@@ -165,7 +169,7 @@ public final class ChunkStateMachine {
 			return ChunkState.OCCUPIED;
 		}
 
-		if (maxScore >= TerritoryConfig.occupationThreshold) {
+		if (maxScore >= TerritoryConfig.occupationScoreRequired(previous)) {
 			chunk.setOccupyingOrg(dominant);
 			return ChunkState.OCCUPIED;
 		}
@@ -174,9 +178,11 @@ public final class ChunkStateMachine {
 		return naturalReturnState(previous);
 	}
 
-	/** 原应退回自然时，敌对边界保持不变（不自动收缩；见 {@link #deriveHostileBordersFromBorderChunks} 注释）。 */
+	/** 原应退回自然时，敌对边界与敌对占领保持不变（不自动收缩）。 */
 	private static ChunkState naturalReturnState(ChunkState previous) {
-		return previous == ChunkState.HOSTILE_BORDER ? ChunkState.HOSTILE_BORDER : ChunkState.NATURAL;
+		return previous == ChunkState.HOSTILE_BORDER || previous == ChunkState.HOSTILE
+				? previous
+				: ChunkState.NATURAL;
 	}
 
 	public static void deriveBorderStates(Map<Long, ChunkTerritoryData> chunks, Set<Long> affectedKeys) {
@@ -222,7 +228,8 @@ public final class ChunkStateMachine {
 			if (next == ChunkState.HOSTILE_BORDER
 					&& (chunk.getState() == ChunkState.OCCUPIED
 					|| chunk.getState() == ChunkState.BORDER
-					|| chunk.getState() == ChunkState.DEMON)) {
+					|| chunk.getState() == ChunkState.DEMON
+					|| chunk.getState() == ChunkState.HOSTILE)) {
 				continue;
 			}
 			if (chunk.getState() == ChunkState.DEMON && next != ChunkState.DEMON) {
@@ -230,7 +237,7 @@ public final class ChunkStateMachine {
 			}
 			chunk.setState(next);
 			// BORDER 保留基础态写入的 occupyingOrg；HOSTILE 无归属
-			if (next == ChunkState.HOSTILE_BORDER) {
+			if (next == ChunkState.HOSTILE_BORDER || next == ChunkState.HOSTILE) {
 				chunk.setOccupyingOrg(null);
 			}
 		}
@@ -274,6 +281,93 @@ public final class ChunkStateMachine {
 			}
 		}
 		return true;
+	}
+
+	/** 变化格的四邻（不含自身），供日更只同步一层邻居。 */
+	public static Set<Long> cardinalNeighborKeys(Collection<Long> changedKeys) {
+		Set<Long> neighbors = new HashSet<>();
+		if (changedKeys == null) {
+			return neighbors;
+		}
+		for (long chunkKey : changedKeys) {
+			ChunkPos pos = new ChunkPos(chunkKey);
+			for (ChunkPos neighbor : getCardinalNeighbors(pos)) {
+				neighbors.add(neighbor.toLong());
+			}
+		}
+		return neighbors;
+	}
+
+	/** 占领族：四邻都是自己的占领/边界 → OCCUPIED，否则 BORDER。其它状态不变。 */
+	public static ChunkState occupiedFamilyFromCardinals(
+			NeighborResolver resolver,
+			long chunkKey,
+			UUID occupyingOrg,
+			ChunkState current
+	) {
+		if (current != ChunkState.OCCUPIED && current != ChunkState.BORDER) {
+			return current;
+		}
+		if (allCardinalNeighborsOwnOccupiedFamily(resolver, chunkKey, occupyingOrg)) {
+			return ChunkState.OCCUPIED;
+		}
+		return ChunkState.BORDER;
+	}
+
+	/**
+	 * 刚变成 {@link ChunkState#BORDER} / {@link ChunkState#HOSTILE_BORDER} 的格子，只对其四邻做一层降级
+	 * （不含对角、不从被降级的邻居再往外传）。
+	 * <ul>
+	 *   <li>自身 BORDER → 四邻 HOSTILE 变为 HOSTILE_BORDER</li>
+	 *   <li>自身 HOSTILE_BORDER → 四邻 OCCUPIED 变为 BORDER（occupyingOrg 由写入路径保留）</li>
+	 * </ul>
+	 * 不改 DEMON、玩家 OCCUPIED/BORDER（规则 1）、SAFE、DEATH、NATURAL、已是 HOSTILE_BORDER 等。
+	 *
+	 * @return 需要改写的邻区 → 新状态；不含未变化的格子
+	 */
+	public static Map<Long, ChunkState> cardinalDemotesFromNewBorders(
+			NeighborResolver resolver,
+			Collection<Long> seedKeys
+	) {
+		Map<Long, ChunkState> demotes = new HashMap<>();
+		if (resolver == null || seedKeys == null || seedKeys.isEmpty()) {
+			return demotes;
+		}
+		for (long seedKey : seedKeys) {
+			NeighborChunkView self = resolver.resolve(seedKey);
+			if (self == null) {
+				continue;
+			}
+			ChunkState selfState = self.state();
+			if (selfState != ChunkState.BORDER && selfState != ChunkState.HOSTILE_BORDER) {
+				continue;
+			}
+			for (ChunkPos neighbor : getCardinalNeighbors(new ChunkPos(seedKey))) {
+				long neighborKey = neighbor.toLong();
+				NeighborChunkView view = resolver.resolve(neighborKey);
+				if (view == null) {
+					continue;
+				}
+				ChunkState next = cardinalDemoteTarget(selfState, view.state());
+				if (next != null) {
+					demotes.put(neighborKey, next);
+				}
+			}
+		}
+		return demotes;
+	}
+
+	/**
+	 * @return 邻区应写成的新状态；无需改动时 {@code null}
+	 */
+	public static ChunkState cardinalDemoteTarget(ChunkState newSelfState, ChunkState neighborState) {
+		if (newSelfState == ChunkState.BORDER && neighborState == ChunkState.HOSTILE) {
+			return ChunkState.HOSTILE_BORDER;
+		}
+		if (newSelfState == ChunkState.HOSTILE_BORDER && neighborState == ChunkState.OCCUPIED) {
+			return ChunkState.BORDER;
+		}
+		return null;
 	}
 
 	/** 切比雪夫距离 ≤ {@code extension} 内是否存在 BORDER。 */

@@ -24,10 +24,11 @@ import luowei.player_block_status.lib.org.OrganizationService;
 import luowei.player_block_status.lib.structure.StructureTerritoryRegistry;
 
 /**
- * 对外公开 API：注册回调、通知放置/删分、只读查询区块。
+ * 对外公开 API：注册回调、通知放置/删分、强制改写区块状态与归属、只读查询区块。
  * <p>
  * 查询一律返回不可变视图，不暴露内部 {@code ChunkTerritoryData}。
- * 强制改写区块、导出调试地图不在本类；请用 OP 指令 {@code /pbs set}、{@code /pbs refresh}、{@code /pbs map}。
+ * 导出调试地图、立刻跑感染/日更不在本类；请用 OP 指令 {@code /pbs map}、{@code /pbs infect}、{@code /pbs refresh}。
+ * {@code /pbs set} 是 {@link #forceSetChunks} 的 OP 入口。
  */
 public final class PlayerBlockStatusLib {
 	private static OrganizationProvider organizationProvider = CompositeOrganizationProvider.INSTANCE;
@@ -167,7 +168,54 @@ public final class PlayerBlockStatusLib {
 		RegionManager.onBlockPlaced(level, pos, ownerId, getOrganizationProvider());
 	}
 
-	/** 只读查询区块领土；无领土数据时 empty。 */
+	/**
+	 * 强制改写切比雪夫半径内区块的状态与/或归属（组织或玩家 UUID）。
+	 * <p>
+	 * 给需要介入领土规则的外部模组：立刻写入当前结果并更新占领索引。
+	 * {@code /pbs set} 走同一路径。
+	 * <p>
+	 * {@code state == null} 表示不改状态；{@code updateOwner == false} 表示不改归属；
+	 * {@code updateOwner == true} 时将占领账户设为 {@code owner}（{@code null} 表示清空）。
+	 * 半径为切比雪夫距离（正方形），{@code 0} 只改中心一格。尚无领土数据的区块会被创建。
+	 * <p>
+	 * 写入后会标脏。下一次日更仍按分数重算，强制结果可能被覆盖。
+	 * {@link ChunkState#DEMON} 不能被其它状态盖掉；写成恶魔会清掉归属。
+	 * <p>
+	 * 仅应在服务端逻辑线程调用。非本线程或参数无效时返回 0。
+	 *
+	 * @return 实际被改写的区块数量
+	 */
+	public static int forceSetChunks(
+			ServerLevel level,
+			ChunkPos center,
+			int radiusChunks,
+			ChunkState state,
+			boolean updateOwner,
+			UUID owner
+	) {
+		return RegionManager.forceSetChunks(level, center, radiusChunks, state, updateOwner, owner);
+	}
+
+	/**
+	 * 强制改写单个区块的状态，不改归属（写成 {@link ChunkState#DEMON} 时仍会清归属）。
+	 * {@code state == null} 时返回 0。
+	 */
+	public static int forceSetChunkState(ServerLevel level, ChunkPos pos, ChunkState state) {
+		if (state == null) {
+			return 0;
+		}
+		return forceSetChunks(level, pos, 0, state, false, null);
+	}
+
+	/**
+	 * 强制改写单个区块的归属；{@code owner == null} 表示清空。不改状态。
+	 * 当前已是 {@link ChunkState#DEMON} 的区块不会改归属。
+	 */
+	public static int forceSetChunkOwner(ServerLevel level, ChunkPos pos, UUID owner) {
+		return forceSetChunks(level, pos, 0, null, true, owner);
+	}
+
+	/** 只读查询已加载区块的领土；未加载或无领土数据时 empty。不触发 chunk 加载。 */
 	public static Optional<ChunkTerritoryView> queryChunk(ServerLevel level, ChunkPos chunkPos) {
 		return TerritoryQueries.queryChunk(level, chunkPos);
 	}
@@ -187,6 +235,7 @@ public final class PlayerBlockStatusLib {
 
 	/**
 	 * 以玩家为中心，切比雪夫半径内按状态分组查询，组内由近到远。
+	 * 未加载格子视为 {@link ChunkState#NATURAL}，不触发 chunk 加载。
 	 */
 	public static Map<ChunkState, List<ChunkPos>> queryChunksInRadius(
 			ServerLevel level,
@@ -199,6 +248,7 @@ public final class PlayerBlockStatusLib {
 
 	/**
 	 * 以区块为中心，切比雪夫半径内按状态分组查询，组内由近到远。
+	 * 未加载格子视为 {@link ChunkState#NATURAL}，不触发 chunk 加载。
 	 */
 	public static Map<ChunkState, List<ChunkPos>> queryChunksInRadius(
 			ServerLevel level,
@@ -251,6 +301,7 @@ public final class PlayerBlockStatusLib {
 
 	/**
 	 * 编码半径内平面状态图字符串（含半径与中心），可用 {@link #decodeChunkStateMap} 解压。
+	 * 未加载格子编码为 NATURAL，不触发 chunk 加载。
 	 */
 	public static TerritoryQueries.ChunkStateMapSnapshot encodeChunkStateMap(
 			ServerLevel level,

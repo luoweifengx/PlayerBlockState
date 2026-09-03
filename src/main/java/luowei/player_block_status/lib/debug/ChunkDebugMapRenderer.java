@@ -300,6 +300,7 @@ public final class ChunkDebugMapRenderer {
 			case OCCUPIED -> new Color(30, 144, 255);
 			case BORDER -> new Color(255, 140, 0);
 			case HOSTILE_BORDER -> new Color(220, 20, 60);
+			case HOSTILE -> new Color(139, 0, 0);
 			case SAFE -> new Color(169, 169, 169);
 			case DEATH -> new Color(128, 0, 128);
 			case DEMON -> new Color(74, 14, 78);
@@ -316,6 +317,7 @@ public final class ChunkDebugMapRenderer {
 				  SAFE (5)           - Gray    #A9A9A9
 				  DEATH (6)          - Purple  #800080
 				  DEMON (7)          - Indigo  #4A0E4E
+				  HOSTILE (8)        - Maroon  #8B0000
 				""";
 	}
 

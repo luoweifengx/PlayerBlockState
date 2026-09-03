@@ -18,7 +18,7 @@ import luowei.player_block_status.PlayerBlockStatus;
 
 /**
  * 结构在世界生成落地时：对 placeInChunk 期间实际写入的非空气方块收集坐标，
- * 经 {@link StructureSentinelWriteQueue} 延后到 Server 线程写入 sentinel 归属。
+ * 经 {@link StructureSentinelWriteQueue} 入队，在区块加载完成（完整 LevelChunk）后写入 sentinel 归属。
  * <p>
  * 捕获窗口由 {@link net.minecraft.world.level.levelgen.structure.StructureStart#placeInChunk} 的 begin/end 界定
  *（ThreadLocal {@link #isCapturingStructureBlocks()}）。窗口内钩子：
@@ -118,7 +118,7 @@ public final class StructureGenerationHooks {
 					structureStart.getReferences()
 			);
 
-			// Worker 仅入队；实例去重与 markStructureSentinel 在主线程刷写时执行。
+			// Worker 仅入队；实例去重与 markStructureSentinel 在 CHUNK_LOAD / 已加载 tick 执行。
 			StructureSentinelWriteQueue.enqueue(
 					state.serverLevel,
 					state.structureKey,

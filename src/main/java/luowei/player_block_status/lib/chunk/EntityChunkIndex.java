@@ -7,6 +7,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import luowei.player_block_status.PlayerBlockStatus;
+
 /**
  * 占领组织 → OCCUPIED / BORDER 分表索引。数据层分开，调用方按需融合。
  * 随维度 SavedData 落盘；仍以各 chunk 的 {@code state}/{@code occupyingOrg} 为真相。
@@ -52,6 +54,20 @@ public final class EntityChunkIndex {
 
 	public Set<Long> getBorderChunks(UUID entityId) {
 		return copyOrEmpty(borderChunks.get(entityId));
+	}
+
+	/** 本维度全部实体的 BORDER 区块并集（去重）。 */
+	public Set<Long> getAllBorderChunks() {
+		Set<Long> all = new HashSet<>();
+		for (Set<Long> keys : borderChunks.values()) {
+			if (keys != null && !keys.isEmpty()) {
+				all.addAll(keys);
+			}
+		}
+		if (all.isEmpty()) {
+			return Set.of();
+		}
+		return Collections.unmodifiableSet(all);
 	}
 
 	/** 组织变更等内部路径：OCCUPIED ∪ BORDER。 */
@@ -107,10 +123,15 @@ public final class EntityChunkIndex {
 	/**
 	 * 按单块最新状态更新倒排索引，避免为重建而加载全部 active。
 	 * 映射表新增/移除 key 时同步维护计数。
+	 * <p>
+	 * 先从 occupied/border 两表都删掉该 key，再仅当 {@code state == OCCUPIED/BORDER}
+	 * 且 {@code occupyingOrg != null} 时写回。因此 NATURAL / DEMON / HOSTILE_BORDER
+	 * 或 {@code occupyingOrg == null} 会把该 key 从倒排索引抹掉。
+	 * 若 key 原先在某张表里、写回后不在该表，打 warn 并附调用栈（查 {@code untrackActiveChunk} 等误清）。
 	 */
 	public void replaceChunk(long chunkKey, ChunkState state, UUID occupyingOrg) {
-		removeChunkKey(occupiedChunks, occupiedCounts, chunkKey);
-		removeChunkKey(borderChunks, borderCounts, chunkKey);
+		UUID prevOccupiedOrg = removeChunkKey(occupiedChunks, occupiedCounts, chunkKey);
+		UUID prevBorderOrg = removeChunkKey(borderChunks, borderCounts, chunkKey);
 		if (occupyingOrg != null) {
 			if (state == ChunkState.OCCUPIED) {
 				addChunk(occupiedChunks, occupiedCounts, occupyingOrg, chunkKey);
@@ -118,10 +139,18 @@ public final class EntityChunkIndex {
 				addChunk(borderChunks, borderCounts, occupyingOrg, chunkKey);
 			}
 		}
+		boolean staysOccupied = occupyingOrg != null && state == ChunkState.OCCUPIED;
+		boolean staysBorder = occupyingOrg != null && state == ChunkState.BORDER;
+		boolean droppedOccupied = prevOccupiedOrg != null && !staysOccupied;
+		boolean droppedBorder = prevBorderOrg != null && !staysBorder;
+		if (droppedOccupied || droppedBorder) {
+			logMembershipDrop(chunkKey, prevOccupiedOrg, prevBorderOrg, state, occupyingOrg);
+		}
 		onDirty.run();
 	}
 
 	public void rebuildFrom(Map<Long, ChunkTerritoryData> chunks) {
+		logIfWipingTables("rebuildFrom");
 		occupiedChunks.clear();
 		borderChunks.clear();
 		occupiedCounts.clear();
@@ -148,6 +177,7 @@ public final class EntityChunkIndex {
 	}
 
 	public void clear() {
+		logIfWipingTables("clear");
 		occupiedChunks.clear();
 		borderChunks.clear();
 		occupiedCounts.clear();
@@ -203,14 +233,61 @@ public final class EntityChunkIndex {
 		}
 	}
 
-	private static void removeChunkKey(Map<UUID, Set<Long>> map, Map<UUID, Integer> counts, long chunkKey) {
+	/**
+	 * 从该表移除 {@code chunkKey}。返回原先持有该 key 的实体；未命中为 {@code null}。
+	 */
+	private static UUID removeChunkKey(Map<UUID, Set<Long>> map, Map<UUID, Integer> counts, long chunkKey) {
+		UUID[] owner = new UUID[1];
 		map.entrySet().removeIf(entry -> {
 			if (!entry.getValue().remove(chunkKey)) {
 				return false;
 			}
+			owner[0] = entry.getKey();
 			decrementCount(counts, entry.getKey());
 			return entry.getValue().isEmpty();
 		});
+		return owner[0];
+	}
+
+	/**
+	 * key 曾在 occupied 或 border 表中，本次 replace 后不再写回该表时记录。
+	 * 含调用栈，便于对照 {@code untrackActiveChunk} / 日更 / 感染。
+	 */
+	private static void logMembershipDrop(
+			long chunkKey,
+			UUID prevOccupiedOrg,
+			UUID prevBorderOrg,
+			ChunkState state,
+			UUID occupyingOrg
+	) {
+		int cx = (int) chunkKey;
+		int cz = (int) (chunkKey >> 32);
+		PlayerBlockStatus.LOGGER.warn(
+				"[pbs index] replaceChunk dropped index membership chunkKey={} cx={} cz={} wasOccupied={} wasBorder={} prevOccupiedOrg={} prevBorderOrg={} newState={} newOccupyingOrg={}",
+				chunkKey,
+				cx,
+				cz,
+				prevOccupiedOrg != null,
+				prevBorderOrg != null,
+				prevOccupiedOrg,
+				prevBorderOrg,
+				state,
+				occupyingOrg,
+				new Throwable("replaceChunk index drop")
+		);
+	}
+
+	private void logIfWipingTables(String op) {
+		if (occupiedChunks.isEmpty() && borderChunks.isEmpty()) {
+			return;
+		}
+		PlayerBlockStatus.LOGGER.warn(
+				"[pbs index] {} wiping occupiedOrgs={} borderOrgs={}",
+				op,
+				occupiedChunks.size(),
+				borderChunks.size(),
+				new Throwable(op + " index wipe")
+		);
 	}
 
 	private static void transferMap(

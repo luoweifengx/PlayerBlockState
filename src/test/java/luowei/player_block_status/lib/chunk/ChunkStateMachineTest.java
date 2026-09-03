@@ -24,7 +24,8 @@ class ChunkStateMachineTest {
 		TerritoryConfig.naturalReturnThreshold = 500;
 		TerritoryConfig.deathThreshold = -100;
 		TerritoryConfig.occupationTakeoverMultiplier = 2.5;
-		TerritoryConfig.borderTakeoverMultiplier = 1.25;
+		TerritoryConfig.borderTakeoverMultiplier = 1.9;
+		TerritoryConfig.hostileBorderMode = HostileBorderMode.SPREAD;
 		TerritoryConfig.hostileBorderExtensionChunks = 2;
 		TerritoryConfig.deathRecoveryPerDay = 30;
 	}
@@ -87,6 +88,52 @@ class ChunkStateMachineTest {
 
 		assertEquals(ChunkState.HOSTILE_BORDER, result.state());
 		assertNull(result.occupyingOrg());
+	}
+
+	@Test
+	void hostileBorderAtPlainOccupationThresholdStaysHostileBorder() {
+		TerritoryDailyProcessor.BaseStateResult result = ChunkStateMachine.computeBaseStateFromSnapshot(
+				snapshot(ChunkState.HOSTILE_BORDER, null, false, Map.of(OWNER, TerritoryConfig.occupationThreshold))
+		);
+
+		assertEquals(ChunkState.HOSTILE_BORDER, result.state());
+		assertNull(result.occupyingOrg());
+	}
+
+	@Test
+	void hostileBorderAtScaledOccupationThresholdBecomesOccupied() {
+		int required = TerritoryConfig.occupationScoreRequired(ChunkState.HOSTILE_BORDER);
+		assertEquals(1900, required);
+
+		TerritoryDailyProcessor.BaseStateResult below = ChunkStateMachine.computeBaseStateFromSnapshot(
+				snapshot(ChunkState.HOSTILE_BORDER, null, false, Map.of(OWNER, required - 1))
+		);
+		assertEquals(ChunkState.HOSTILE_BORDER, below.state());
+
+		TerritoryDailyProcessor.BaseStateResult at = ChunkStateMachine.computeBaseStateFromSnapshot(
+				snapshot(ChunkState.HOSTILE_BORDER, null, false, Map.of(OWNER, required))
+		);
+		assertEquals(ChunkState.OCCUPIED, at.state());
+		assertEquals(OWNER, at.occupyingOrg());
+	}
+
+	@Test
+	void hostileOccupiedBelowScaledThresholdStaysHostile() {
+		TerritoryDailyProcessor.BaseStateResult result = ChunkStateMachine.computeBaseStateFromSnapshot(
+				snapshot(ChunkState.HOSTILE, null, false, Map.of(OWNER, TerritoryConfig.occupationThreshold))
+		);
+
+		assertEquals(ChunkState.HOSTILE, result.state());
+		assertNull(result.occupyingOrg());
+	}
+
+	@Test
+	void hostileStateIdRoundTrips() {
+		assertEquals(8, ChunkState.HOSTILE.getId());
+		assertEquals(ChunkState.HOSTILE, ChunkState.fromId(8));
+		assertTrue(ChunkState.HOSTILE.isHostileOccupied());
+		assertTrue(ChunkState.HOSTILE.isHostileAdjacent());
+		assertFalse(ChunkState.HOSTILE_BORDER.isHostileOccupied());
 	}
 
 	@Test

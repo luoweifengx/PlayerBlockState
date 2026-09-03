@@ -36,4 +36,13 @@ class TerritoryPerfTest {
 		assertTrue(TerritoryPerf.exceedsWarnBudget(10_000_000L));
 		assertTrue(TerritoryPerf.exceedsWarnBudget(10_000_001L));
 	}
+
+	@Test
+	void stageNanosStartsAtZero() {
+		TerritoryPerf.StageNanos stages = new TerritoryPerf.StageNanos();
+		assertEquals(0L, stages.lookupNs);
+		assertEquals(0L, stages.createNs);
+		assertEquals(0L, stages.putNs);
+		assertEquals(0L, stages.persistNs);
+	}
 }

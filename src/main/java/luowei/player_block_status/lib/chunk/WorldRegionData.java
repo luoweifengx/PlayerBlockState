@@ -11,10 +11,12 @@ import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.chunk.LevelChunk;
 
 import luowei.player_block_status.PlayerBlockStatus;
 import luowei.player_block_status.lib.api.OrganizationProvider;
 import luowei.player_block_status.lib.debug.MapExportTrace;
+import luowei.player_block_status.lib.debug.TerritoryPerf;
 
 /**
  * 维度领土协调器：区块数据存于 chunk Attachment，维度元数据存于 {@link DimensionTerritoryData}。
@@ -38,10 +40,16 @@ public final class WorldRegionData {
 		}
 		long loadStart = System.nanoTime();
 		DimensionTerritoryData dimensionData = DimensionTerritoryData.get(level);
+		long loadMs = (System.nanoTime() - loadStart) / 1_000_000L;
+		PlayerBlockStatus.LOGGER.debug(
+				"[pbs persist] DimensionTerritoryData getForMapExport in {}ms active={}",
+				loadMs,
+				dimensionData.getActiveChunkKeys().size()
+		);
 		if (trace != null) {
 			trace.step(
 					"DimensionTerritoryData loaded in %dms (activeChunkKeys=%d)",
-					(System.nanoTime() - loadStart) / 1_000_000L,
+					loadMs,
 					dimensionData.getActiveChunkKeys().size()
 			);
 		}
@@ -53,23 +61,36 @@ public final class WorldRegionData {
 		ChunkTerritoryData chunk = ChunkTerritoryAccess.getOrCreate(level, chunkPos);
 		if (chunk.hasTerritoryData()) {
 			trackActiveChunk(chunkKey);
+			PlayerBlockStatus.LOGGER.debug(
+					"[pbs persist] getOrCreateChunk tracks because hasTerritoryData cx={} cz={} key={} state={} occupyingOrg={} placedBlocks={} activeSize={}",
+					chunkPos.x,
+					chunkPos.z,
+					chunkKey,
+					chunk.getState(),
+					chunk.getOccupyingOrg(),
+					chunk.getPlacedBlocks().size(),
+					dimensionData.getActiveChunkKeys().size()
+			);
 		}
 		return chunk;
 	}
 
 	public ChunkTerritoryData getChunk(long chunkKey) {
 		ChunkTerritoryData chunk = ChunkTerritoryAccess.getIfPresent(level, new ChunkPos(chunkKey));
-		if (chunk == null || !chunk.hasTerritoryData()) {
-			return null;
-		}
-		return chunk;
+		return requireTerritoryOrLog(chunkKey, "getChunk", chunk);
 	}
 
-	/** 每日重算/地图读取：只要 attachment 有数据即返回，必要时触发 chunk 加载。 */
+	/** 每日重算/全量收集：只要 attachment 有数据即返回，必要时触发 chunk 加载。 */
 	public ChunkTerritoryData getChunkForRecompute(long chunkKey) {
 		ChunkPos chunkPos = new ChunkPos(chunkKey);
 		level.getChunk(chunkPos.x, chunkPos.z);
 		ChunkTerritoryData chunk = ChunkTerritoryAccess.getIfPresent(level, chunkPos);
+		return requireTerritoryOrLog(chunkKey, "getChunkForRecompute", chunk);
+	}
+
+	/** 查询用：仅已加载区块；未加载或无领土数据返回 {@code null}。 */
+	public ChunkTerritoryData getChunkIfLoaded(long chunkKey) {
+		ChunkTerritoryData chunk = ChunkTerritoryAccess.getIfLoaded(level, new ChunkPos(chunkKey));
 		if (chunk == null || !chunk.hasTerritoryData()) {
 			return null;
 		}
@@ -88,7 +109,23 @@ public final class WorldRegionData {
 				chunks.put(chunkKey, chunk);
 				continue;
 			}
-			untrackActiveChunk(chunkKey);
+			/*
+			 * 附件是真相；没附件即自然，倒排索引应删掉该 key。
+			 * 读不到就保留索引是找补，会掩盖持久化问题、留下幽灵边界。
+			 * 应先完善 chunk attachment / 维度 SavedData 落盘；持久化可靠后再考虑找补。
+			 * 因此暂时恢复「读不到 / 空附件 → 当自然并清 occupied/border 索引」。
+			 *
+			 * 找补（暂禁用）：force-load 读不到 attachment 时不清 occupied/border 索引。
+			 * untrackActiveChunk(chunkKey, false, "collectAllChunks miss");
+			 */
+			ChunkPos chunkPos = new ChunkPos(chunkKey);
+			PlayerBlockStatus.LOGGER.debug(
+					"[pbs persist] collectAllChunks miss force-load found no territory data cx={} cz={} key={}",
+					chunkPos.x,
+					chunkPos.z,
+					chunkKey
+			);
+			untrackActiveChunk(chunkKey, true, "collectAllChunks miss");
 		}
 		return chunks;
 	}
@@ -99,6 +136,90 @@ public final class WorldRegionData {
 
 	public Set<Long> getDemonChunkKeys() {
 		return dimensionData.getDemonChunkKeys();
+	}
+
+	/**
+	 * 感染抽样用的玩家 BORDER。当前直接返回倒排索引，不再从 attachment 回填。
+	 * <p>
+	 * 附件是真相；没附件即自然，倒排索引应删掉该 key。
+	 * 读不到就保留索引 / 从 attachment 修补索引是找补，会掩盖持久化问题、留下幽灵边界。
+	 * 应先完善 chunk attachment / 维度 SavedData 落盘；持久化可靠后再考虑找补。
+	 * 因此暂时恢复「读不到 / 空附件 → 当自然并清 occupied/border 索引」，感染只读 {@code getAllBorderChunks()}。
+	 */
+	public Set<Long> resolveAllBorderChunks() {
+		/*
+		 * 找补（暂禁用）：索引为空时从 attachment 修补并打 warn。
+		 * {@code untrackActiveChunk} 曾在 attachment 暂未读到时把 BORDER 从索引抹掉，导致 {@code sampled=0}。
+		 *
+		 * EntityChunkIndex index = getEntityChunkIndex();
+		 * Set<Long> fromIndex = index.getAllBorderChunks();
+		 * if (!fromIndex.isEmpty()) {
+		 *     return fromIndex;
+		 * }
+		 * Set<Long> repaired = new HashSet<>();
+		 * for (long chunkKey : getActiveChunkKeys()) {
+		 *     ChunkTerritoryData chunk = getChunk(chunkKey);
+		 *     if (chunk == null || chunk.getState() != ChunkState.BORDER || chunk.getOccupyingOrg() == null) {
+		 *         continue;
+		 *     }
+		 *     index.replaceChunk(chunkKey, ChunkState.BORDER, chunk.getOccupyingOrg());
+		 *     repaired.add(chunkKey);
+		 * }
+		 * if (!repaired.isEmpty()) {
+		 *     PlayerBlockStatus.LOGGER.warn(
+		 *             "[pbs infect] border index was empty; repaired {} BORDER chunk(s) from attachments",
+		 *             repaired.size()
+		 *     );
+		 * } else {
+		 *     PlayerBlockStatus.LOGGER.warn(
+		 *             "[pbs infect] no BORDER chunks in index or attachments (active={})",
+		 *             getActiveChunkKeyCount()
+		 *     );
+		 * }
+		 * return repaired;
+		 */
+		return getEntityChunkIndex().getAllBorderChunks();
+	}
+
+	/**
+	 * 直接改写区块状态（敌对边界 / 敌对占领等），不标脏、不走日更 write-back。
+	 * 仍将 attachment 标为待存盘，并更新倒排索引。
+	 * {@link ChunkState#HOSTILE} / {@link ChunkState#HOSTILE_BORDER} / {@link ChunkState#DEMON}
+	 * 会清空 occupyingOrg；其它转换（含 OCCUPIED→BORDER）保留原 occupyingOrg。
+	 */
+	public void applyDirectState(long chunkKey, ChunkState state) {
+		if (state == null) {
+			return;
+		}
+		ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
+		boolean clearOrg = state == ChunkState.HOSTILE
+				|| state == ChunkState.HOSTILE_BORDER
+				|| state == ChunkState.DEMON;
+		if (chunk.getState() == state && (!clearOrg || chunk.getOccupyingOrg() == null)) {
+			syncDemonIndex(chunkKey, chunk);
+			return;
+		}
+		if (!chunk.getState().canBeReplacedBy(state)) {
+			return;
+		}
+		chunk.setState(state);
+		if (clearOrg) {
+			chunk.setOccupyingOrg(null);
+		}
+		persistChunkChange(chunkKey, chunk);
+		getEntityChunkIndex().replaceChunk(chunkKey, state, chunk.getOccupyingOrg());
+	}
+
+	/**
+	 * 四邻降级写入：OCCUPIED→BORDER 保留 occupyingOrg；HOSTILE→HOSTILE_BORDER 无归属。
+	 */
+	public void applyCardinalBorderDemotes(Map<Long, ChunkState> demotes) {
+		if (demotes == null || demotes.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<Long, ChunkState> entry : demotes.entrySet()) {
+			applyDirectState(entry.getKey(), entry.getValue());
+		}
 	}
 
 	/**
@@ -141,7 +262,7 @@ public final class WorldRegionData {
 	public void markChunkDirty(long chunkKey) {
 		if (dimensionData.markChunkDirty(chunkKey)) {
 			PlayerBlockStatus.LOGGER.debug(
-					"[pbs daily] chunk {} marked dirty (dirtyCount={}, activeCount={})",
+					"[pbs persist] chunk {} marked dirty (dirtyCount={}, activeCount={})",
 					new ChunkPos(chunkKey),
 					dimensionData.getDirtyChunkKeys().size(),
 					dimensionData.getActiveChunkKeys().size()
@@ -210,6 +331,11 @@ public final class WorldRegionData {
 		return dimensionData.getLastDailyDay();
 	}
 
+	/** 旧存档 {@code last_daily_day} 若仍是日历日，可能大于当前 tick 周期；压齐以便本周期能调度。 */
+	public void alignLastRefreshPeriod(long currentPeriod) {
+		dimensionData.alignLastRefreshPeriod(currentPeriod);
+	}
+
 	public boolean tryBeginDailyRefresh(long currentDay) {
 		return dimensionData.tryBeginDailyRefresh(currentDay);
 	}
@@ -261,16 +387,74 @@ public final class WorldRegionData {
 	/**
 	 * 结构模板方块：写入 sentinel 归属（不计分；不标脏，待玩家链式认领后再参与日更）。
 	 * 仅应在 Server 线程调用；世界生成 Worker 请经 {@link luowei.player_block_status.lib.structure.StructureSentinelWriteQueue} 入队。
+	 * <p>
+	 * 已持有完整 {@link LevelChunk} 时走 {@link #markStructureSentinel(LevelChunk, BlockPos, TerritoryPerf.StageNanos)}，
+	 * 避免 {@code getChunk} 打断生成流水线。
 	 */
 	public void markStructureSentinel(BlockPos pos) {
+		markStructureSentinel(pos, null);
+	}
+
+	/**
+	 * {@code stages} 非 null 时累加四段墙钟，供 tick 级 {@code [pbs perf]} 拆分。
+	 * 会阻塞 {@code getChunk}，只给关服 flush 等必须落盘的路径。
+	 */
+	public void markStructureSentinel(BlockPos pos, TerritoryPerf.StageNanos stages) {
+		long t0 = stages != null ? System.nanoTime() : 0L;
 		UUID existing = getPlacedBlockOwner(pos);
+		if (stages != null) {
+			stages.lookupNs += System.nanoTime() - t0;
+		}
 		if (existing != null && !TerritoryConfig.isStructureSentinel(existing)) {
 			return;
 		}
 		long chunkKey = new ChunkPos(pos).toLong();
+		t0 = stages != null ? System.nanoTime() : 0L;
 		ChunkTerritoryData chunk = getOrCreateChunk(chunkKey);
+		if (stages != null) {
+			stages.createNs += System.nanoTime() - t0;
+			t0 = System.nanoTime();
+		}
 		chunk.addPlacedBlock(pos, TerritoryConfig.STRUCTURE_BLOCK_SENTINEL);
+		if (stages != null) {
+			stages.putNs += System.nanoTime() - t0;
+			t0 = System.nanoTime();
+		}
 		persistChunkChange(chunkKey, chunk);
+		if (stages != null) {
+			stages.persistNs += System.nanoTime() - t0;
+		}
+	}
+
+	/**
+	 * 在已加载的 {@link LevelChunk} 上写 sentinel，不调用 {@code getChunk}。
+	 */
+	public void markStructureSentinel(LevelChunk levelChunk, BlockPos pos, TerritoryPerf.StageNanos stages) {
+		long t0 = stages != null ? System.nanoTime() : 0L;
+		ChunkTerritoryData existingData = ChunkTerritoryAccess.getIfPresent(levelChunk);
+		UUID existing = existingData == null ? null : existingData.getPlacedBlockOwner(pos);
+		if (stages != null) {
+			stages.lookupNs += System.nanoTime() - t0;
+		}
+		if (existing != null && !TerritoryConfig.isStructureSentinel(existing)) {
+			return;
+		}
+		long chunkKey = levelChunk.getPos().toLong();
+		t0 = stages != null ? System.nanoTime() : 0L;
+		ChunkTerritoryData chunk = ChunkTerritoryAccess.getOrCreate(levelChunk);
+		if (stages != null) {
+			stages.createNs += System.nanoTime() - t0;
+			t0 = System.nanoTime();
+		}
+		chunk.addPlacedBlock(pos, TerritoryConfig.STRUCTURE_BLOCK_SENTINEL);
+		if (stages != null) {
+			stages.putNs += System.nanoTime() - t0;
+			t0 = System.nanoTime();
+		}
+		persistChunkChange(levelChunk, chunkKey, chunk);
+		if (stages != null) {
+			stages.persistNs += System.nanoTime() - t0;
+		}
 	}
 
 	public void claimStructureBlock(BlockPos pos, UUID owner) {
@@ -332,13 +516,14 @@ public final class WorldRegionData {
 		dimensionData.getEntityChunkIndex().mergeOrganization(from, to);
 	}
 
+	/** 只读查询：不加载 chunk；未加载或不含领土数据时 empty。 */
 	public Optional<ChunkTerritoryData> queryChunk(ChunkPos chunkPos) {
-		ChunkTerritoryData chunk = getChunkForRecompute(chunkPos.toLong());
-		return Optional.ofNullable(chunk);
+		return Optional.ofNullable(getChunkIfLoaded(chunkPos.toLong()));
 	}
 
 	/**
-	 * 调试用：在切比雪夫半径内强制写入区块状态与/或归属（组织/玩家 UUID）。
+	 * 在切比雪夫半径内强制写入区块状态与/或归属（组织/玩家 UUID）。
+	 * {@link luowei.player_block_status.lib.api.PlayerBlockStatusLib#forceSetChunks} 的写入实现。
 	 * {@code state == null} 表示不改状态；{@code updateOwner == false} 表示不改归属；
 	 * {@code updateOwner == true} 时将 {@code occupyingOrg} 设为 {@code owner}（可为 null 清空）。
 	 * 写入后标脏（维度 dirtyChunkKeys+epoch），并增量更新占领索引。
@@ -408,13 +593,13 @@ public final class WorldRegionData {
 		ChunkPos chunkPos = new ChunkPos(chunkKey);
 		ChunkTerritoryData chunk = getChunk(chunkKey);
 		if (chunk == null) {
-			untrackActiveChunk(chunkKey);
+			untrackActiveChunk(chunkKey, true, "removeEmptyChunk null");
 			return;
 		}
 
 		ChunkTerritoryAccess.clearIfEmpty(level, chunkPos, chunk);
 		if (!chunk.hasTerritoryData()) {
-			untrackActiveChunk(chunkKey);
+			untrackActiveChunk(chunkKey, true, "removeEmptyChunk empty");
 		}
 	}
 
@@ -441,8 +626,10 @@ public final class WorldRegionData {
 	}
 
 	void persistChunkChange(long chunkKey, ChunkTerritoryData chunk) {
+		boolean tracking = chunk.hasTerritoryData();
+		logPersistChunkChange(chunkKey, chunk, tracking);
 		ChunkPos chunkPos = new ChunkPos(chunkKey);
-		if (chunk.hasTerritoryData()) {
+		if (tracking) {
 			trackActiveChunk(chunkKey);
 			syncDemonIndex(chunkKey, chunk);
 			ChunkTerritoryAccess.markDirty(level, chunkPos);
@@ -450,7 +637,21 @@ public final class WorldRegionData {
 		}
 
 		ChunkTerritoryAccess.clearIfEmpty(level, chunkPos, chunk);
-		untrackActiveChunk(chunkKey);
+		untrackActiveChunk(chunkKey, true, "persist empty");
+	}
+
+	void persistChunkChange(LevelChunk levelChunk, long chunkKey, ChunkTerritoryData chunk) {
+		boolean tracking = chunk.hasTerritoryData();
+		logPersistChunkChange(chunkKey, chunk, tracking);
+		if (tracking) {
+			trackActiveChunk(chunkKey);
+			syncDemonIndex(chunkKey, chunk);
+			ChunkTerritoryAccess.markDirty(levelChunk);
+			return;
+		}
+
+		ChunkTerritoryAccess.clearIfEmpty(levelChunk, chunk);
+		untrackActiveChunk(chunkKey, true, "persist empty");
 	}
 
 	private void syncDemonIndex(long chunkKey, ChunkTerritoryData chunk) {
@@ -464,15 +665,90 @@ public final class WorldRegionData {
 	private void trackActiveChunk(long chunkKey) {
 		if (dimensionData.getActiveChunkKeys().add(chunkKey)) {
 			dimensionData.setDirty();
+			ChunkPos chunkPos = new ChunkPos(chunkKey);
+			PlayerBlockStatus.LOGGER.debug(
+					"[pbs persist] trackActiveChunk newly added cx={} cz={} key={} activeSize={}",
+					chunkPos.x,
+					chunkPos.z,
+					chunkKey,
+					dimensionData.getActiveChunkKeys().size()
+			);
 		}
 	}
 
-	private void untrackActiveChunk(long chunkKey) {
-		if (dimensionData.getActiveChunkKeys().remove(chunkKey)) {
+	/**
+	 * 附件是真相；没附件即自然，倒排索引应删掉该 key。
+	 * 读不到就保留索引是找补，会掩盖持久化问题、留下幽灵边界。
+	 * 应先完善 chunk attachment / 维度 SavedData 落盘；持久化可靠后再考虑找补。
+	 * 因此暂时恢复「读不到 / 空附件 → 当自然并清 occupied/border 索引」。
+	 *
+	 * @param clearOwnedIndex 存活路径应为 true（清 occupied/border）。{@code false} 是找补：读不到 attachment 时保留索引。
+	 * @param reason          调用原因，写入 persist 日志
+	 */
+	private void untrackActiveChunk(long chunkKey, boolean clearOwnedIndex, String reason) {
+		boolean wasActive = dimensionData.getActiveChunkKeys().remove(chunkKey);
+		if (wasActive) {
 			dimensionData.setDirty();
 		}
-		dimensionData.removeDemonChunk(chunkKey);
-		getEntityChunkIndex().replaceChunk(chunkKey, ChunkState.NATURAL, null);
+		boolean demonRemoved = dimensionData.removeDemonChunk(chunkKey);
+		ChunkPos chunkPos = new ChunkPos(chunkKey);
+		PlayerBlockStatus.LOGGER.debug(
+				"[pbs persist] untrackActiveChunk cx={} cz={} key={} reason={} clearOwnedIndex={} wasActive={} demonRemoved={} activeSize={}",
+				chunkPos.x,
+				chunkPos.z,
+				chunkKey,
+				reason,
+				clearOwnedIndex,
+				wasActive,
+				demonRemoved,
+				dimensionData.getActiveChunkKeys().size()
+		);
+		if (clearOwnedIndex) {
+			getEntityChunkIndex().replaceChunk(chunkKey, ChunkState.NATURAL, null);
+		}
+	}
+
+	private ChunkTerritoryData requireTerritoryOrLog(long chunkKey, String via, ChunkTerritoryData chunk) {
+		ChunkPos chunkPos = new ChunkPos(chunkKey);
+		if (chunk == null) {
+			PlayerBlockStatus.LOGGER.debug(
+					"[pbs persist] {} returning null (attachment null) cx={} cz={} key={}",
+					via,
+					chunkPos.x,
+					chunkPos.z,
+					chunkKey
+			);
+			return null;
+		}
+		if (!chunk.hasTerritoryData()) {
+			PlayerBlockStatus.LOGGER.debug(
+					"[pbs persist] {} returning null (!hasTerritoryData) cx={} cz={} key={} state={} occupyingOrg={} placedBlocks={}",
+					via,
+					chunkPos.x,
+					chunkPos.z,
+					chunkKey,
+					chunk.getState(),
+					chunk.getOccupyingOrg(),
+					chunk.getPlacedBlocks().size()
+			);
+			return null;
+		}
+		return chunk;
+	}
+
+	private void logPersistChunkChange(long chunkKey, ChunkTerritoryData chunk, boolean tracking) {
+		ChunkPos chunkPos = new ChunkPos(chunkKey);
+		PlayerBlockStatus.LOGGER.debug(
+				"[pbs persist] persistChunkChange cx={} cz={} key={} state={} occupyingOrg={} hasTerritoryData={} action={} placedBlocks={}",
+				chunkPos.x,
+				chunkPos.z,
+				chunkKey,
+				chunk.getState(),
+				chunk.getOccupyingOrg(),
+				chunk.hasTerritoryData(),
+				tracking ? "track+markDirty" : "clearAttachment+untrack",
+				chunk.getPlacedBlocks().size()
+		);
 	}
 
 	private UUID resolveScoreEntity(ServerLevel level, UUID playerId, OrganizationProvider orgProvider) {
